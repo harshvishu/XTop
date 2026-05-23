@@ -45,7 +45,7 @@ struct XTopAppServices {
 
     init(
         runner: CommandRunner = CommandRunner(),
-        advancedSensorClient: AdvancedSensorClient = UnavailableAdvancedSensorClient()
+        advancedSensorClient: AdvancedSensorClient = LocalAdvancedSensorClient()
     ) {
         let resolver = DefaultFocusedProjectResolver(runner: runner)
 

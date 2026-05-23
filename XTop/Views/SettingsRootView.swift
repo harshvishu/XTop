@@ -134,7 +134,7 @@ private struct SensorSettingsView: View {
             Section("Advanced Sensors") {
                 
                 Text(
-                    "GPU, temperature, and fan readings require a privileged helper. Baseline CPU, memory, storage, and cache telemetry continue without it."
+                    "GPU, temperature, and fan readings come from in-process IOKit and SMC reads. Disable to skip these reads; baseline telemetry is unaffected."
                 )
                 .foregroundStyle(.secondary)
                 
