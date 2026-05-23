@@ -2,42 +2,6 @@ import Foundation
 import Testing
 @testable import XTop
 
-// MARK: - SMCReader allowlist
-
-@Suite("SMCReader allowlist")
-struct SMCReaderAllowlistTests {
-
-    @Test("SMCKey fourCC packs four ASCII bytes in MSB-first order")
-    func fourCCPacksBytes() {
-        let key = SMCKey.cpuProximityTemp // "TC0P"
-        let expected: UInt32 =
-            (UInt32(UInt8(ascii: "T")) << 24)
-            | (UInt32(UInt8(ascii: "C")) << 16)
-            | (UInt32(UInt8(ascii: "0")) << 8)
-            | UInt32(UInt8(ascii: "P"))
-        #expect(key.fourCC == expected)
-    }
-
-    @Test("Every SMCKey raw value is exactly four ASCII characters")
-    func allKeysAreFourByteFourCC() {
-        for key in SMCKey.allCases {
-            #expect(key.rawValue.count == 4, "Key \(key.rawValue) is not four characters")
-            #expect(key.rawValue.allSatisfy { $0.isASCII }, "Key \(key.rawValue) is not ASCII")
-        }
-    }
-
-    @Test("Allowlist contains only documented temperature and fan keys")
-    func allowlistMatchesDocumentedKeys() {
-        let expected: Set<String> = [
-            "TC0P", "TC0D", "TCXC",
-            "TG0P", "TG0D",
-            "F0Ac", "F1Ac", "F0Mn", "F0Mx"
-        ]
-        let actual = Set(SMCKey.allCases.map(\.rawValue))
-        #expect(actual == expected)
-    }
-}
-
 // MARK: - GPUStatsReader
 
 @Suite("GPUStatsReader")
@@ -101,14 +65,41 @@ struct GPUStatsReaderTests {
     }
 }
 
-// MARK: - LocalAdvancedSensorClient smoke tests
+// MARK: - IOHIDSensorReader smoke tests
 //
-// We cannot inject fake SMC connections without exposing more internals,
-// so these tests exercise the parts of LocalAdvancedSensorClient that go
-// through GPUStatsReader (which IS injectable) and assert observable
-// behavior on the public protocol. SMC behavior is covered indirectly:
-// on machines without AppleSMC the temperature/fan reasons are populated;
-// on machines with it the access test reports success.
+// The IOHID SPI does not allow us to inject fake services without leaking
+// CoreFoundation internals into the test target, so these tests probe the
+// live host. On Apple Silicon Macs the temperature path should return at
+// least one usable reading; on hosts without the SPI it should throw
+// .clientUnavailable. Either outcome is acceptable.
+
+@Suite("IOHIDSensorReader")
+struct IOHIDSensorReaderTests {
+
+    @Test("Temperature collection returns finite values or throws cleanly")
+    func temperatureReadingsAreFiniteOrError() throws {
+        let reader = IOHIDSensorReader()
+        do {
+            let readings = try reader.collectTemperatureReadings()
+            for reading in readings {
+                #expect(reading.value > 0)
+                #expect(reading.value < 150)
+            }
+        } catch IOHIDSensorReaderError.clientUnavailable {
+            // Acceptable on hosts where the SPI is not present.
+        } catch IOHIDSensorReaderError.noSensorsAvailable {
+            // Acceptable when the SPI exists but exposes nothing.
+        }
+    }
+
+    @Test("Fan capability probe returns a boolean without throwing")
+    func fanCapabilityProbeIsSafe() {
+        let reader = IOHIDSensorReader()
+        _ = reader.hostHasFanHardware()
+    }
+}
+
+// MARK: - LocalAdvancedSensorClient smoke tests
 
 @Suite("LocalAdvancedSensorClient")
 struct LocalAdvancedSensorClientTests {
@@ -116,7 +107,7 @@ struct LocalAdvancedSensorClientTests {
     @Test("fetchStatus reports ready when GPU reader returns a value")
     func fetchStatusReadyWhenGPUAvailable() async {
         let client = LocalAdvancedSensorClient(
-            smc: SMCReader(),
+            hid: IOHIDSensorReader(),
             gpu: GPUStatsReader {
                 [GPUServiceDescriptor(performanceStatistics: ["Device Utilization %": 5 as NSNumber])]
             }
@@ -127,20 +118,17 @@ struct LocalAdvancedSensorClientTests {
         #expect(status.supportsGPU)
     }
 
-    @Test("fetchStatus reports unsupported when GPU absent and SMC unavailable")
-    func fetchStatusUnsupportedWhenNothingAvailable() async {
-        // Empty GPU matcher + a real SMCReader: on hosts without AppleSMC
-        // both probes fail and we should land in unsupported. On hosts WITH
-        // AppleSMC, SMC reads may succeed and the assertion would not hold,
-        // so we only assert the GPU-absent path.
+    @Test("fetchStatus stays in a known installation state when GPU absent")
+    func fetchStatusKnownStateWhenGPUAbsent() async {
+        // With no GPU and depending on host HID availability the client may
+        // land in either .ready (HID temperature present) or .unsupported
+        // (HID SPI missing). Both are valid.
         let client = LocalAdvancedSensorClient(
-            smc: SMCReader(),
+            hid: IOHIDSensorReader(),
             gpu: GPUStatsReader { [] }
         )
         let status = await client.fetchStatus()
         #expect(!status.supportsGPU)
-        // installation depends on whether SMC works on the test host;
-        // we don't assert a fixed value to keep the test machine-agnostic.
         let okShapes: [AdvancedSensorHelperInstallation] = [.ready, .unsupported]
         #expect(okShapes.contains(status.installation))
     }
@@ -148,16 +136,14 @@ struct LocalAdvancedSensorClientTests {
     @Test("sampleAdvancedMetrics returns partial sample with reasons when GPU only")
     func sampleReturnsPartialWhenOnlyGPUAvailable() async throws {
         let client = LocalAdvancedSensorClient(
-            smc: SMCReader(),
+            hid: IOHIDSensorReader(),
             gpu: GPUStatsReader {
                 [GPUServiceDescriptor(performanceStatistics: ["Device Utilization %": 12 as NSNumber])]
             }
         )
         let sample = try await client.sampleAdvancedMetrics()
         #expect(sample.gpuPercent == 12.0)
-        // Temperature and fan reasons should be populated when SMC fails or
-        // returns nothing; on a Mac where SMC works they will be set.
-        // We assert: if values are nil, reasons are non-empty.
+        // Missing values must carry a human-readable reason.
         if sample.temperatureC == nil {
             #expect(sample.unavailableReasons[AdvancedSensorMetric.temperature.rawValue] != nil)
         }
@@ -166,23 +152,19 @@ struct LocalAdvancedSensorClientTests {
         }
     }
 
-    @Test("sampleAdvancedMetrics throws when every reader returns nothing")
+    @Test("sampleAdvancedMetrics throws only when every reader returns nothing")
     func sampleThrowsWhenAllReadersFail() async {
-        // GPU matcher returns empty; we cannot guarantee SMC is unavailable
-        // on the test host, so this assertion is conditional.
         let client = LocalAdvancedSensorClient(
-            smc: SMCReader(),
+            hid: IOHIDSensorReader(),
             gpu: GPUStatsReader { [] }
         )
         do {
             let sample = try await client.sampleAdvancedMetrics()
-            // On a Mac where SMC works, we get a partial sample — at least one
-            // reading must be present and the reasons map covers the rest.
+            // On hosts where HID temperature works, we get a partial sample.
             #expect(sample.temperatureC != nil || sample.fanRPM != nil)
         } catch let error as AdvancedSensorClientError {
-            // On a Mac without SMC, the client throws the "no readers" case.
             if case .unsupported = error {
-                // expected
+                // expected on hosts without any sensor source
             } else {
                 Issue.record("Unexpected error case: \(error)")
             }
@@ -194,7 +176,7 @@ struct LocalAdvancedSensorClientTests {
     @Test("performAccessTest summarizes available metrics")
     func accessTestSummarizesAvailableMetrics() async {
         let client = LocalAdvancedSensorClient(
-            smc: SMCReader(),
+            hid: IOHIDSensorReader(),
             gpu: GPUStatsReader {
                 [GPUServiceDescriptor(performanceStatistics: ["Device Utilization %": 8 as NSNumber])]
             }
@@ -207,7 +189,7 @@ struct LocalAdvancedSensorClientTests {
     @Test("startSetup mirrors fetchStatus when GPU is available")
     func startSetupReadyWhenGPUAvailable() async {
         let client = LocalAdvancedSensorClient(
-            smc: SMCReader(),
+            hid: IOHIDSensorReader(),
             gpu: GPUStatsReader {
                 [GPUServiceDescriptor(performanceStatistics: ["Device Utilization %": 1 as NSNumber])]
             }
