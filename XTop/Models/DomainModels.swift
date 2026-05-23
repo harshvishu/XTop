@@ -411,17 +411,38 @@ enum AdvancedSensorSetupState: String, CaseIterable {
 
     static func resolve(
         isEnabled: Bool,
-        helperInstalled: Bool,
-        approvalGranted: Bool,
-        hostSupported: Bool,
+        helperStatus: AdvancedSensorHelperStatus,
         accessTestFailed: Bool
     ) -> AdvancedSensorSetupState {
-        guard hostSupported else { return .unsupported }
-        guard isEnabled else { return .disabled }
-        guard helperInstalled else { return .notInstalled }
-        guard approvalGranted else { return .approvalRequired }
-        guard !accessTestFailed else { return .failed }
-        return .connected
+        if helperStatus.installation == .unsupported {
+            return .unsupported
+        }
+        if !isEnabled {
+            return .disabled
+        }
+        switch helperStatus.installation {
+        case .notInstalled:
+            return .notInstalled
+        case .awaitingApproval:
+            return .approvalRequired
+        case .ready:
+            // Host might be ready in principle but expose no metrics.
+            if !helperStatus.hostSupportsAnyMetric {
+                return .unsupported
+            }
+            if accessTestFailed {
+                return .failed
+            }
+            // Last connectivity result is allowed to be `.unknown` (e.g. just
+            // after launch, before any sample has run); we still treat the
+            // helper as connected for setup-state purposes.
+            if case .failed = helperStatus.connectivity {
+                return .failed
+            }
+            return .connected
+        case .unsupported:
+            return .unsupported
+        }
     }
 }
 

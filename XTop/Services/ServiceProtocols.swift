@@ -3,6 +3,7 @@ import Foundation
 protocol SystemTelemetryService: Sendable {
     func collectBaseSnapshot(previous: SystemTelemetrySnapshot?) async -> SystemTelemetrySnapshot
     func collectAdvancedMetrics() async -> (gpu: MetricValue, temp: MetricValue, fan: MetricValue, diskCache: MetricValue)
+    func setAdvancedSensorsEnabled(_ enabled: Bool) async
 }
 
 protocol XcodeEnvironmentService: Sendable {

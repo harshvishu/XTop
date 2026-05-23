@@ -3,10 +3,23 @@ import Foundation
 
 actor DefaultSystemTelemetryService: SystemTelemetryService {
     private let runner: CommandRunner
+    private let advancedSensorClient: AdvancedSensorClient
+    private let advancedSampleTimeout: Duration
     private var priorProcessorTicks: [ProcessorTicks] = []
+    private var advancedSensorsEnabled: Bool = true
 
-    init(runner: CommandRunner = CommandRunner()) {
+    init(
+        runner: CommandRunner = CommandRunner(),
+        advancedSensorClient: AdvancedSensorClient = UnavailableAdvancedSensorClient(),
+        advancedSampleTimeout: Duration = .milliseconds(750)
+    ) {
         self.runner = runner
+        self.advancedSensorClient = advancedSensorClient
+        self.advancedSampleTimeout = advancedSampleTimeout
+    }
+
+    func setAdvancedSensorsEnabled(_ enabled: Bool) async {
+        advancedSensorsEnabled = enabled
     }
 
     func collectBaseSnapshot(
@@ -42,6 +55,7 @@ actor DefaultSystemTelemetryService: SystemTelemetryService {
         fan: MetricValue,
         diskCache: MetricValue
     ) {
+        // Disk cache is derived from vm_stat — independent of the helper.
         let vmStat = await runner.run(
             command: "vm_stat",
             arguments: [],
@@ -49,12 +63,110 @@ actor DefaultSystemTelemetryService: SystemTelemetryService {
         )
         let diskCache = parseDiskCacheFromVMStat(vmStat.stdout)
 
+        // Advanced sensors require the privileged helper. Failure here must
+        // never block baseline telemetry — we always produce a complete
+        // (gpu, temp, fan) triple of MetricValues.
+        let advancedTriple = await sampleAdvancedTriple()
+
+        return (advancedTriple.gpu, advancedTriple.temp, advancedTriple.fan, diskCache)
+    }
+
+    private func sampleAdvancedTriple() async -> (gpu: MetricValue, temp: MetricValue, fan: MetricValue) {
+        guard advancedSensorsEnabled else {
+            return makeUnavailableTriple(
+                reason: "Advanced sensors are disabled in settings."
+            )
+        }
+
+        let sample: AdvancedSensorSample
+        do {
+            sample = try await withAdvancedSensorTimeout {
+                try await self.advancedSensorClient.sampleAdvancedMetrics()
+            }
+        } catch let error as AdvancedSensorClientError {
+            return makeUnavailableTriple(reason: error.reason)
+        } catch is CancellationError {
+            return makeUnavailableTriple(reason: "Advanced sensor sample was cancelled.")
+        } catch {
+            return makeUnavailableTriple(
+                reason: "Advanced sensor sample failed: \(error.localizedDescription)"
+            )
+        }
+
         return (
-            MetricValue.unavailable(label: "GPU", unit: "%", reason: "Advanced GPU metrics require optional privileged helper."),
-            MetricValue.unavailable(label: "Temperature", unit: "C", reason: "SMC temperature access not configured."),
-            MetricValue.unavailable(label: "Fan", unit: "RPM", reason: "SMC fan access not configured."),
-            diskCache
+            gpu: metricValue(
+                label: "GPU",
+                unit: "%",
+                value: sample.gpuPercent,
+                metric: .gpu,
+                reasons: sample.unavailableReasons
+            ),
+            temp: metricValue(
+                label: "Temperature",
+                unit: "C",
+                value: sample.temperatureC,
+                metric: .temperature,
+                reasons: sample.unavailableReasons
+            ),
+            fan: metricValue(
+                label: "Fan",
+                unit: "RPM",
+                value: sample.fanRPM,
+                metric: .fan,
+                reasons: sample.unavailableReasons
+            )
         )
+    }
+
+    private func metricValue(
+        label: String,
+        unit: String,
+        value: Double?,
+        metric: AdvancedSensorMetric,
+        reasons: [String: String]
+    ) -> MetricValue {
+        if let value {
+            return MetricValue(
+                label: label,
+                value: value,
+                unit: unit,
+                isAvailable: true,
+                unavailableReason: nil
+            )
+        }
+        let reason = reasons[metric.rawValue]
+            ?? "Helper did not return a value for \(label)."
+        return MetricValue.unavailable(label: label, unit: unit, reason: reason)
+    }
+
+    private func makeUnavailableTriple(reason: String) -> (gpu: MetricValue, temp: MetricValue, fan: MetricValue) {
+        (
+            gpu: MetricValue.unavailable(label: "GPU", unit: "%", reason: reason),
+            temp: MetricValue.unavailable(label: "Temperature", unit: "C", reason: reason),
+            fan: MetricValue.unavailable(label: "Fan", unit: "RPM", reason: reason)
+        )
+    }
+
+    private func withAdvancedSensorTimeout<T: Sendable>(
+        _ operation: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
+        let timeout = advancedSampleTimeout
+        return try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask { try await operation() }
+            group.addTask {
+                try await Task.sleep(for: timeout)
+                throw AdvancedSensorClientError.timedOut(
+                    reason: "Helper did not respond within the sampling budget."
+                )
+            }
+            guard let result = try await group.next() else {
+                throw AdvancedSensorClientError.communicationFailed(
+                    reason: "Helper task ended without a result."
+                )
+            }
+            group.cancelAll()
+            return result
+        }
     }
 
     private func processorUsage() -> (overall: MetricValue, perCore: [Double]) {

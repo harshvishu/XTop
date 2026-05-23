@@ -21,3 +21,4 @@ DerivedData/
 ## Other
 *.dSYM/
 *.profraw
+.opencode/

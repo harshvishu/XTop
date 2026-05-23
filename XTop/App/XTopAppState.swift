@@ -11,7 +11,10 @@ struct XTopAppState {
     init() {
         let services = XTopAppServices()
         let preferences = MacbarPreferences()
-        let sensorSettings = SensorSettingsModel()
+        let sensorSettings = SensorSettingsModel(
+            client: services.advancedSensorClient,
+            telemetryService: services.telemetryService
+        )
         let diagnostics = DeveloperDiagnosticsStore()
 
         self.services = services
@@ -34,17 +37,25 @@ struct XTopAppState {
 struct XTopAppServices {
     let runner: CommandRunner
     let resolver: FocusedProjectResolving
+    let advancedSensorClient: AdvancedSensorClient
     let telemetryService: SystemTelemetryService
     let xcodeService: XcodeEnvironmentService
     let gitService: GitContextService
     let maintenanceService: MaintenanceService
 
-    init(runner: CommandRunner = CommandRunner()) {
+    init(
+        runner: CommandRunner = CommandRunner(),
+        advancedSensorClient: AdvancedSensorClient = UnavailableAdvancedSensorClient()
+    ) {
         let resolver = DefaultFocusedProjectResolver(runner: runner)
 
         self.runner = runner
         self.resolver = resolver
-        self.telemetryService = DefaultSystemTelemetryService(runner: runner)
+        self.advancedSensorClient = advancedSensorClient
+        self.telemetryService = DefaultSystemTelemetryService(
+            runner: runner,
+            advancedSensorClient: advancedSensorClient
+        )
         self.xcodeService = DefaultXcodeEnvironmentService(runner: runner)
         self.gitService = DefaultGitContextService(runner: runner)
         self.maintenanceService = DefaultMaintenanceService(

@@ -134,7 +134,7 @@ private struct SensorSettingsView: View {
             Section("Advanced Sensors") {
                 
                 Text(
-                    "GPU, temperature, and fan readings need a supported helper and user approval. Baseline CPU, memory, storage, and cache telemetry continue without it."
+                    "GPU, temperature, and fan readings require a privileged helper. Baseline CPU, memory, storage, and cache telemetry continue without it."
                 )
                 .foregroundStyle(.secondary)
                 
@@ -166,53 +166,45 @@ private struct SensorSettingsView: View {
                 }
             }
             
-            Section("Setup") {
+            Section("Helper") {
                 
-                Text(
-                    "Helper packaging is pending. These controls keep the setup and troubleshooting state explicit while a signed helper path is decided."
-                )
-                .foregroundStyle(.secondary)
-                
-                HStack {
-                    
-                    Button(
-                        "Start Setup",
-                        systemImage: "plus.circle",
-                        action: sensors.startSetup
-                    )
-                    
-                    Button(
-                        "Record Helper",
-                        systemImage: "checkmark.seal",
-                        action: sensors.recordHelperInstallation
-                    )
-                    
-                    Button(
-                        "Record Approval",
-                        systemImage: "hand.raised",
-                        action: sensors.recordApproval
-                    )
+                if let outcome = sensors.lastSetupOutcome {
+                    Text(outcome.message)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 
                 HStack {
                     
-                    Button(
-                        "Test Access",
-                        systemImage: "waveform.path.ecg",
-                        action: sensors.testAccess
-                    )
+                    Button("Set Up Helper", systemImage: "plus.circle") {
+                        Task { await sensors.startSetup() }
+                    }
+                    .disabled(sensors.isPerformingAction)
                     
-                    Button(
-                        "Disable",
-                        systemImage: "pause.circle",
-                        action: sensors.disable
-                    )
+                    Button("Test Access", systemImage: "waveform.path.ecg") {
+                        Task { await sensors.testAccess() }
+                    }
+                    .disabled(sensors.isPerformingAction)
+                }
+                
+                HStack {
                     
-                    Button(
-                        "Remove Configuration",
-                        systemImage: "trash",
-                        action: sensors.removeConfiguration
-                    )
+                    if sensors.isEnabled {
+                        Button("Disable", systemImage: "pause.circle") {
+                            Task { await sensors.disable() }
+                        }
+                        .disabled(sensors.isPerformingAction)
+                    } else {
+                        Button("Enable", systemImage: "play.circle") {
+                            Task { await sensors.enable() }
+                        }
+                        .disabled(sensors.isPerformingAction)
+                    }
+                    
+                    Button("Remove Configuration", systemImage: "trash") {
+                        Task { await sensors.removeConfiguration() }
+                    }
+                    .disabled(sensors.isPerformingAction)
                 }
             }
         }

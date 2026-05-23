@@ -4,49 +4,79 @@ import Observation
 @MainActor
 @Observable
 final class SensorSettingsModel {
-    private(set) var helperEnabled: Bool
-    private(set) var helperInstalled: Bool
-    private(set) var approvalGranted: Bool
-    private(set) var accessTestFailed: Bool
-    private(set) var lastAccessTestSummary: String
+
+    // MARK: - Persisted user preference
+
+    /// User's stated intent: do they want advanced sensors active at all?
+    /// This is the only piece of sensor settings state that persists across
+    /// launches. Everything else is observed from the helper at runtime.
+    private(set) var isEnabled: Bool
+
+    // MARK: - Observed runtime state
+
+    /// Most recent helper status snapshot from `client.fetchStatus()`.
+    private(set) var helperStatus: AdvancedSensorHelperStatus
+
+    /// Most recent end-to-end access test result.
+    private(set) var lastAccessTestResult: AdvancedSensorAccessTestResult
+
+    /// Most recent outcome of a setup attempt, surfaced to settings.
+    private(set) var lastSetupOutcome: AdvancedSensorSetupOutcome?
+
+    /// True while an async action (status fetch, setup, test) is in flight.
+    private(set) var isPerformingAction: Bool = false
+
+    // MARK: - Dependencies
 
     @ObservationIgnored
     private let defaults: UserDefaults
 
     @ObservationIgnored
-    private let hostSupported: Bool
+    private let client: AdvancedSensorClient
+
+    @ObservationIgnored
+    private let telemetryService: SystemTelemetryService?
+
+    // MARK: - Init
 
     init(
-        defaults: UserDefaults = .standard,
-        hostSupported: Bool = true
+        client: AdvancedSensorClient = UnavailableAdvancedSensorClient(),
+        telemetryService: SystemTelemetryService? = nil,
+        defaults: UserDefaults = .standard
     ) {
+        self.client = client
+        self.telemetryService = telemetryService
         self.defaults = defaults
-        self.hostSupported = hostSupported
 
-        self.helperEnabled =
-            defaults.object(
-                forKey: Keys.helperEnabled
-            ) as? Bool ?? true
+        if defaults.object(forKey: Keys.isEnabled) != nil {
+            self.isEnabled = defaults.bool(forKey: Keys.isEnabled)
+        } else {
+            self.isEnabled = true
+        }
 
-        self.helperInstalled =
-            defaults.bool(
-                forKey: Keys.helperInstalled
-            )
+        self.helperStatus = .unavailable
+        self.lastAccessTestResult = .neverRun
+        self.lastSetupOutcome = nil
 
-        self.approvalGranted =
-            defaults.bool(
-                forKey: Keys.approvalGranted
-            )
+        // Probe real helper state immediately, and propagate the user's
+        // enabled preference to the telemetry service.
+        Task { [weak self] in
+            guard let self else { return }
+            await self.propagateEnabledPreference()
+            await self.refreshStatus()
+        }
+    }
 
-        self.accessTestFailed =
-            defaults.bool(
-                forKey: Keys.accessTestFailed
-            )
+    // MARK: - Derived state
 
-        self.lastAccessTestSummary =
-            defaults.string(
-                forKey: Keys.lastAccessTestSummary
-            ) ?? "No sensor access test has run."
+    /// Resolved sensor setup state from real observed inputs + user preference.
+    var setupState: AdvancedSensorSetupState {
+        AdvancedSensorSetupState.resolve(
+            isEnabled: isEnabled,
+            helperStatus: helperStatus,
+            accessTestFailed: lastAccessTestResult.performedAt != .distantPast
+                && !lastAccessTestResult.succeeded
+        )
     }
 
     var capabilities: [AdvancedSensorCapability] {
@@ -58,104 +88,89 @@ final class SensorSettingsModel {
         }
     }
 
-    var setupState: AdvancedSensorSetupState {
-        AdvancedSensorSetupState.resolve(
-            isEnabled: helperEnabled,
-            helperInstalled: helperInstalled,
-            approvalGranted: approvalGranted,
-            hostSupported: hostSupported,
-            accessTestFailed: accessTestFailed
+    /// Single sentence describing the most recent diagnostics outcome.
+    /// Used directly by ``SettingsRootView`` — no string formatting needed.
+    var lastAccessTestSummary: String {
+        lastAccessTestResult.summary
+    }
+
+    // MARK: - Real actions (replace the old placeholder toggles)
+
+    /// Refresh the observed helper status. Safe to call repeatedly.
+    func refreshStatus() async {
+        helperStatus = await client.fetchStatus()
+    }
+
+    /// Attempt a real setup of the privileged helper.
+    /// Equivalent of the old "Start Setup" / "Record Helper" / "Record
+    /// Approval" buttons collapsed into one honest action.
+    func startSetup() async {
+        await performing {
+            self.lastSetupOutcome = await self.client.startSetup()
+            await self.refreshStatus()
+        }
+    }
+
+    /// Run an end-to-end access test and record the result.
+    func testAccess() async {
+        await performing {
+            self.lastAccessTestResult = await self.client.performAccessTest()
+            await self.refreshStatus()
+        }
+    }
+
+    /// Disable advanced sensors without removing the helper.
+    /// Updates the persisted user preference and propagates to telemetry.
+    func disable() async {
+        isEnabled = false
+        persistEnabledPreference()
+        await propagateEnabledPreference()
+        lastAccessTestResult = AdvancedSensorAccessTestResult(
+            succeeded: false,
+            summary: "Advanced sensors disabled. Baseline telemetry remains active.",
+            performedAt: .now
         )
     }
 
-    func startSetup() {
-        helperEnabled = true
-        accessTestFailed = false
-        lastAccessTestSummary =
-            "Setup is ready for a supported helper installation."
-        persist()
+    /// Re-enable advanced sensors after a previous disable.
+    func enable() async {
+        isEnabled = true
+        persistEnabledPreference()
+        await propagateEnabledPreference()
+        await refreshStatus()
     }
 
-    func recordHelperInstallation() {
-        helperEnabled = true
-        helperInstalled = true
-        approvalGranted = false
-        accessTestFailed = false
-        lastAccessTestSummary =
-            "Helper presence recorded. Approval is still required."
-        persist()
+    /// Drop the local helper configuration.
+    func removeConfiguration() async {
+        await performing {
+            await self.client.removeConfiguration()
+            self.lastAccessTestResult = AdvancedSensorAccessTestResult(
+                succeeded: false,
+                summary: "Sensor helper configuration removed.",
+                performedAt: .now
+            )
+            self.lastSetupOutcome = nil
+            await self.refreshStatus()
+        }
     }
 
-    func recordApproval() {
-        helperEnabled = true
-        helperInstalled = true
-        approvalGranted = true
-        accessTestFailed = false
-        lastAccessTestSummary =
-            "Helper approval recorded. Test access to verify metrics."
-        persist()
+    // MARK: - Private helpers
+
+    private func performing(_ work: @MainActor () async -> Void) async {
+        isPerformingAction = true
+        await work()
+        isPerformingAction = false
     }
 
-    func testAccess() {
-        accessTestFailed = setupState != .connected
-        lastAccessTestSummary =
-            accessTestFailed
-            ? "Sensor test failed because helper setup is incomplete."
-            : "Sensor access test completed. Waiting for live helper metric feed."
-        persist()
+    private func propagateEnabledPreference() async {
+        await telemetryService?.setAdvancedSensorsEnabled(isEnabled)
     }
 
-    func disable() {
-        helperEnabled = false
-        accessTestFailed = false
-        lastAccessTestSummary =
-            "Advanced sensors disabled. Baseline telemetry remains active."
-        persist()
-    }
-
-    func removeConfiguration() {
-        helperEnabled = true
-        helperInstalled = false
-        approvalGranted = false
-        accessTestFailed = false
-        lastAccessTestSummary =
-            "Sensor helper configuration removed."
-        persist()
-    }
-
-    private func persist() {
-        defaults.set(
-            helperEnabled,
-            forKey: Keys.helperEnabled
-        )
-        defaults.set(
-            helperInstalled,
-            forKey: Keys.helperInstalled
-        )
-        defaults.set(
-            approvalGranted,
-            forKey: Keys.approvalGranted
-        )
-        defaults.set(
-            accessTestFailed,
-            forKey: Keys.accessTestFailed
-        )
-        defaults.set(
-            lastAccessTestSummary,
-            forKey: Keys.lastAccessTestSummary
-        )
+    private func persistEnabledPreference() {
+        defaults.set(isEnabled, forKey: Keys.isEnabled)
     }
 
     private enum Keys {
-        static let helperEnabled =
-            "sensor.helperEnabled"
-        static let helperInstalled =
-            "sensor.helperInstalled"
-        static let approvalGranted =
-            "sensor.approvalGranted"
-        static let accessTestFailed =
-            "sensor.accessTestFailed"
-        static let lastAccessTestSummary =
-            "sensor.lastAccessTestSummary"
+        static let isEnabled = "sensor.isEnabled"
     }
 }
