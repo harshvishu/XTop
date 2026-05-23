@@ -11,6 +11,7 @@ import SwiftUI
 @main
 struct XTopApp: App {
     @State private var appState = XTopAppState()
+    @State private var settingsActivator = SettingsWindowActivator()
     
     var body: some Scene {
         MenuBarExtra {
@@ -49,7 +50,7 @@ struct XTopApp: App {
         
         switch appState.preferences.menuBarSummaryMode {
             case .cpuAndMemory:
-                return String(format: "%@ %.0f/%.0f", symbol, cpu, mem)
+                return String(format: "%@ %.0f|%.0f", symbol, cpu, mem)
             case .cpuOnly:
                 return String(format: "%@ %.0f%%", symbol, cpu)
             case .iconOnly:

@@ -163,7 +163,15 @@ final class LocalAdvancedSensorClient: AdvancedSensorClient, @unchecked Sendable
         do {
             if let fan = try hid.readAverageFanRPM() {
                 fanRPM = fan
+            } else if hid.hostHasFanHardware() {
+                // Fan hardware exists but the reads were not usable —
+                // this is a real read failure, not the no-hardware case.
+                reasons[AdvancedSensorMetric.fan.rawValue] =
+                    "Fan hardware detected, but no readable RPM value was returned."
             } else {
+                // Honest "no fan hardware" — expected on MacBook Air and
+                // fanless Mac mini configurations. Surfaced separately so
+                // the settings UI can present it as the expected state.
                 reasons[AdvancedSensorMetric.fan.rawValue] =
                     "No fan hardware detected on this Mac."
             }

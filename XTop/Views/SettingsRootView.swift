@@ -124,37 +124,37 @@ private struct GeneralSettingsView: View {
 // MARK: - Sensor Settings
 
 private struct SensorSettingsView: View {
-    
+
     @Environment(SensorSettingsModel.self) private var sensors
-    
+
     var body: some View {
-        
+
         Form {
-            
+
             Section("Advanced Sensors") {
-                
+
                 Text(
-                    "GPU, temperature, and fan readings come from in-process IOKit and SMC reads. Disable to skip these reads; baseline telemetry is unaffected."
+                    "GPU readings come from IOAccelerator; temperature and fan readings come from the system's HID thermal sensors. Macs without fan hardware (MacBook Air, Mac mini M-series) correctly show fan as unavailable — this is not a malfunction."
                 )
                 .foregroundStyle(.secondary)
-                
+
                 ForEach(
                     sensors.capabilities
                 ) { capability in
-                    
+
                     LabeledContent(
                         capability.metric.rawValue
                     ) {
-                        
+
                         VStack(
                             alignment: .trailing,
                             spacing: 2
                         ) {
-                            
+
                             Text(
                                 capability.state.title
                             )
-                            
+
                             Text(
                                 capability.state.nextAction
                             )
@@ -164,31 +164,9 @@ private struct SensorSettingsView: View {
                         }
                     }
                 }
-            }
-            
-            Section("Helper") {
-                
-                if let outcome = sensors.lastSetupOutcome {
-                    Text(outcome.message)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                
+
                 HStack {
-                    
-                    Button("Set Up Helper", systemImage: "plus.circle") {
-                        Task { await sensors.startSetup() }
-                    }
-                    .disabled(sensors.isPerformingAction)
-                    
-                    Button("Test Access", systemImage: "waveform.path.ecg") {
-                        Task { await sensors.testAccess() }
-                    }
-                    .disabled(sensors.isPerformingAction)
-                }
-                
-                HStack {
-                    
+
                     if sensors.isEnabled {
                         Button("Disable", systemImage: "pause.circle") {
                             Task { await sensors.disable() }
@@ -200,9 +178,9 @@ private struct SensorSettingsView: View {
                         }
                         .disabled(sensors.isPerformingAction)
                     }
-                    
-                    Button("Remove Configuration", systemImage: "trash") {
-                        Task { await sensors.removeConfiguration() }
+
+                    Button("Test Access", systemImage: "waveform.path.ecg") {
+                        Task { await sensors.testAccess() }
                     }
                     .disabled(sensors.isPerformingAction)
                 }

@@ -201,4 +201,29 @@ struct LocalAdvancedSensorClientTests {
             Issue.record("Expected .ready, got \(outcome)")
         }
     }
+
+    @Test("Fan reason distinguishes no-hardware from read-failure")
+    func fanReasonReflectsHostHardware() async throws {
+        // Use a real IOHID reader to query the host capability so the test
+        // adapts to whatever Mac it runs on instead of asserting one fixed
+        // string. The contract: when fanRPM is nil the reason MUST be the
+        // no-hardware string on a host that has no fan service registered,
+        // and MUST be a read-failure string on a host that does.
+        let hid = IOHIDSensorReader()
+        let client = LocalAdvancedSensorClient(
+            hid: hid,
+            gpu: GPUStatsReader {
+                [GPUServiceDescriptor(performanceStatistics: ["Device Utilization %": 1 as NSNumber])]
+            }
+        )
+        let sample = try await client.sampleAdvancedMetrics()
+        guard sample.fanRPM == nil else { return } // host with working fans
+        let reason = sample.unavailableReasons[AdvancedSensorMetric.fan.rawValue] ?? ""
+        if hid.hostHasFanHardware() {
+            #expect(reason.localizedCaseInsensitiveContains("readable")
+                || reason.localizedCaseInsensitiveContains("failed"))
+        } else {
+            #expect(reason.localizedCaseInsensitiveContains("no fan hardware"))
+        }
+    }
 }
