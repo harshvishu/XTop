@@ -11,6 +11,12 @@ It lives in your menu bar, providing real-time insights into your system's perfo
 - **Elegant Menu Bar Interface:** A clean, unobtrusive panel that gives you data when you need it without getting in your way.
 - **Customizable:** Configure what you want to see through the app's settings.
 
+## Screenshots
+
+| Menu Bar Panel | Settings — Sensors |
+|---|---|
+| ![Menu Bar Panel](.github/images/menu-bar-panel.png) | ![Settings Sensors Tab](.github/images/settings-sensors-tab.png) |
+
 ## Getting Started
 
 ### Prerequisites
