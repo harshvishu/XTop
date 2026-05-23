@@ -10,6 +10,7 @@ import SwiftUI
 struct StatusSummaryView: View {
     let lastRefresh: Date
     let showsSeconds: Bool
+    let telemetry: SystemTelemetrySnapshot
 
     var body: some View {
         GroupBox {
@@ -26,12 +27,34 @@ struct StatusSummaryView: View {
                         Text(lastRefresh, format: .dateTime.hour().minute())
                     }
                 }
+
+                LabeledContent("CPU") {
+                    metricText(telemetry.cpuPercent)
+                }
+
+                LabeledContent("Memory") {
+                    metricText(telemetry.memoryUsedPercent)
+                }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func metricText(_ metric: MetricValue) -> some View {
+        if let value = metric.value {
+            Text(value / 100, format: .percent.precision(.fractionLength(0)))
+        } else {
+            Text("Unavailable")
+                .foregroundStyle(.secondary)
         }
     }
 }
 
 #Preview {
-    StatusSummaryView(lastRefresh: .now, showsSeconds: true)
+    StatusSummaryView(
+        lastRefresh: .now,
+        showsSeconds: true,
+        telemetry: .empty
+    )
         .padding()
 }

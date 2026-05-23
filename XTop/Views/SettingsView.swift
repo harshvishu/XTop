@@ -8,18 +8,12 @@
 import SwiftUI
 
 struct SettingsView: View {
-    @AppStorage("showsRefreshSeconds") private var showsRefreshSeconds = false
-
     var body: some View {
-        Form {
-            Toggle("Show seconds in refresh time", isOn: $showsRefreshSeconds)
-        }
-        .formStyle(.grouped)
-        .padding()
-        .frame(width: 360)
+        SettingsRootView()
     }
 }
 
 #Preview {
     SettingsView()
+        .xtopEnvironment(XTopAppState())
 }

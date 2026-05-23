@@ -10,37 +10,52 @@ import SwiftUI
 
 struct MenuBarPanelView: View {
     @AppStorage("showsRefreshSeconds") private var showsRefreshSeconds = false
+    @Environment(MacbarPreferences.self) private var preferences
+    @Environment(MacbarViewModel.self) private var viewModel
     @State private var lastRefresh = Date.now
-
+    
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            MenuBarHeaderView()
-
-            StatusSummaryView(
-                lastRefresh: lastRefresh,
-                showsSeconds: showsRefreshSeconds
-            )
-
+        GroupBox {
+            //            MenuBarHeaderView()
+            
+            //            StatusSummaryView(
+            //                lastRefresh: lastRefresh,
+            //                showsSeconds: showsRefreshSeconds,
+            //                telemetry: viewModel.telemetry
+            //            )
+            
+            DashboardRootView()
+                .padding(.horizontal, 8)
+            
+            Divider()
+            
             HStack {
                 Button("Refresh", systemImage: "arrow.clockwise", action: refresh)
-
+                
                 SettingsLink {
                     Label("Settings", systemImage: "gearshape")
                 }
+                
+                Button("Quit", systemImage: "power", action: quit)
             }
-
-            Divider()
-
-            Button("Quit XTop", systemImage: "power", action: quit)
+            .padding(8)
         }
-        .padding()
-        .frame(width: 300)
+        .frame(width: preferences.dashboardDensity.width)
+        .task {
+            viewModel.startSampling()
+        }
+        .onDisappear {
+            viewModel.stopSampling()
+        }
     }
-
+    
     private func refresh() {
-        lastRefresh = .now
+        Task {
+            await viewModel.refresh()
+            lastRefresh = .now
+        }
     }
-
+    
     private func quit() {
         NSApplication.shared.terminate(nil)
     }
@@ -48,4 +63,5 @@ struct MenuBarPanelView: View {
 
 #Preview {
     MenuBarPanelView()
+        .xtopEnvironment(XTopAppState())
 }

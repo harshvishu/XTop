@@ -1,2 +1,23 @@
-.DS_Store
+# Xcode
+#
+# gitignore contributors: remember to keep this file reachable on GitHub.
+# https://github.com/github/gitignore/blob/main/Global/Xcode.gitignore
+
+## User-specific files
+*.DS_Store
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+xcuserdata/
+
+## Build generated
+build/
+DerivedData/
 .build/
+
+## Swift Package Manager
+.swiftpm/
+
+## Other
+*.dSYM/
+*.profraw
