@@ -4,12 +4,13 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [main]
+    branches: [main, release, 'release/**']
     tags: ['v*']
   workflow_dispatch:
 
 jobs:
   build:
+    if: ${{ !(startsWith(github.ref, 'refs/tags/v') && github.actor == 'github-actions[bot]') }}
     runs-on: macos-14
     permissions:
       contents: write
@@ -17,6 +18,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Select Xcode 16
         run: |
@@ -38,10 +41,36 @@ jobs:
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             echo "APP_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
             echo "ARTIFACT_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+            echo "RELEASE_TAG=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
+            echo "SHOULD_RELEASE=true" >> "$GITHUB_ENV"
+          elif [[ "${GITHUB_REF}" == refs/heads/release || "${GITHUB_REF}" == refs/heads/release/* ]]; then
+            latest_tag=$(git tag -l 'v*' --sort=-v:refname | head -n 1)
+
+            if [[ -z "$latest_tag" ]]; then
+              next_tag="v0.0.1"
+            else
+              version_core="${latest_tag#v}"
+              IFS='.' read -r major minor patch <<< "$version_core"
+
+              if [[ -z "${major:-}" || -z "${minor:-}" || -z "${patch:-}" ]]; then
+                echo "Unexpected latest tag format: $latest_tag" >&2
+                exit 1
+              fi
+
+              next_patch=$((patch + 1))
+              next_tag="v${major}.${minor}.${next_patch}"
+            fi
+
+            next_version="${next_tag#v}"
+            echo "APP_VERSION=${next_version}" >> "$GITHUB_ENV"
+            echo "ARTIFACT_VERSION=${next_version}" >> "$GITHUB_ENV"
+            echo "RELEASE_TAG=${next_tag}" >> "$GITHUB_ENV"
+            echo "SHOULD_RELEASE=true" >> "$GITHUB_ENV"
           else
             # Keep MARKETING_VERSION Xcode-compatible on branch/PR builds.
             echo "APP_VERSION=0.0.0" >> "$GITHUB_ENV"
             echo "ARTIFACT_VERSION=0.0.0-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+            echo "SHOULD_RELEASE=false" >> "$GITHUB_ENV"
           fi
 
       - name: Build app
@@ -67,6 +96,20 @@ jobs:
           cd out
           shasum -a 256 XTop-*.dmg XTop-*.zip > SHA256SUMS.txt
 
+      - name: Create release tag
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/release' || startsWith(github.ref, 'refs/heads/release/'))
+        run: |
+          if git ls-remote --tags origin "refs/tags/${RELEASE_TAG}" | grep -q "${RELEASE_TAG}"; then
+            echo "Tag ${RELEASE_TAG} already exists on origin."
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git tag -a "${RELEASE_TAG}" -m "Release ${RELEASE_TAG}"
+          git push origin "refs/tags/${RELEASE_TAG}"
+
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -75,7 +118,7 @@ jobs:
           retention-days: 14
 
       - name: Build release notes
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: env.SHOULD_RELEASE == 'true'
         run: |
           {
             echo "## Downloads"
@@ -96,8 +139,10 @@ jobs:
           } > out/RELEASE_NOTES.md
 
       - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: env.SHOULD_RELEASE == 'true'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          target_commitish: ${{ github.sha }}
           files: out/*
           body_path: out/RELEASE_NOTES.md
