@@ -12,6 +12,7 @@ import SwiftUI
 struct XTopApp: App {
     @State private var appState = XTopAppState()
     @State private var settingsActivator = SettingsWindowActivator()
+    @State private var dockVisibility = DockVisibilityController()
     
     var body: some Scene {
         MenuBarExtra {

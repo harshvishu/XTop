@@ -6,15 +6,26 @@ struct DashboardRootView: View {
     @State private var podName = ""
     @State private var pendingMaintenanceAction: PendingMaintenanceAction?
 
+    var onRefresh: () -> Void = {}
+    var onOpenSettings: () -> Void = {}
+    var onQuit: () -> Void = {}
+    var onOpenSimulatorInspector: () -> Void = {}
+
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: DashboardTheme.sectionSpacing) {
-                SystemTelemetryCard()
-                DashboardDivider()
+                SystemTelemetryCard(
+                    onRefresh: onRefresh,
+                    onOpenSettings: onOpenSettings,
+                    onQuit: onQuit
+                )
+                
+                SimulatorInspectorCard(action: onOpenSimulatorInspector)
+
                 XcodeUtilityCard(snapshot: viewModel.xcodeSnapshot)
-                DashboardDivider()
+                
                 GitMonitorCard()
-                DashboardDivider()
+                
                 MaintenanceCard(
                     podName: $podName,
                     pendingMaintenanceAction: $pendingMaintenanceAction
@@ -121,6 +132,10 @@ private struct ScrollbarFreeDashboardScrollView<Content: View>: NSViewRepresenta
 private struct SystemTelemetryCard: View {
     @Environment(MacbarViewModel.self) private var viewModel
 
+    let onRefresh: () -> Void
+    let onOpenSettings: () -> Void
+    let onQuit: () -> Void
+
     var body: some View {
         DashboardCard(title: "System", systemImage: "waveform.path.ecg") {
             VStack(alignment: .leading, spacing: DashboardTheme.itemSpacing) {
@@ -186,7 +201,11 @@ private struct SystemTelemetryCard: View {
                 }
             }
         } accessory: {
-            SettingsIconButton()
+            SystemCardToolbar(
+                onRefresh: onRefresh,
+                onOpenSettings: onOpenSettings,
+                onQuit: onQuit
+            )
         }
     }
 
@@ -419,18 +438,18 @@ private struct XcodeUtilityCard: View {
     @State private var detailExpanded = false
 
     var body: some View {
-        DashboardCard(title: "Xcode Utility", systemImage: "hammer") {
+        DashboardCard(title: "", systemImage: "hammer") {
             VStack(alignment: .leading, spacing: DashboardTheme.itemSpacing) {
-                HStack {
-                    LabeledValue(label: "DerivedData", value: FileSizeScanner.formatBytes(snapshot.totalDerivedDataBytes))
-                    Spacer()
-                    LabeledValue(label: "Projects", value: "\(snapshot.openProjects.count)")
-                }
-
-                SubmenuRow(title: "Details", isExpanded: $detailExpanded)
+                SubmenuRow(title: "Xcode Utility", isExpanded: $detailExpanded)
 
                 if detailExpanded {
                     VStack(alignment: .leading, spacing: 7) {
+                        HStack {
+                            LabeledValue(label: "DerivedData", value: FileSizeScanner.formatBytes(snapshot.totalDerivedDataBytes))
+                            Spacer()
+                            LabeledValue(label: "Projects", value: "\(snapshot.openProjects.count)")
+                        }
+
                         DashboardDetailHeading(title: "DerivedData Locations")
                         DashboardList(paths: snapshot.derivedDataLocations.map {
                             "\($0.path) -> \(FileSizeScanner.formatBytes($0.sizeBytes))"
@@ -460,7 +479,7 @@ private struct GitMonitorCard: View {
     @State private var detailExpanded = false
 
     var body: some View {
-        DashboardCard(title: "Git Monitor", systemImage: "point.topleft.down.curvedto.point.bottomright.up") {
+        DashboardCard(title: "", systemImage: "point.topleft.down.curvedto.point.bottomright.up") {
             VStack(alignment: .leading, spacing: DashboardTheme.itemSpacing) {
 
                 if let primary = viewModel.primaryMonitoredRepository {
@@ -468,10 +487,6 @@ private struct GitMonitorCard: View {
                         repository: primary,
                         snapshot: viewModel.gitSnapshot(for: primary.id)
                     )
-                } else {
-                    Text("No primary repository configured.")
-                        .font(.caption)
-                        .foregroundStyle(DashboardTheme.secondaryText)
                 }
 
                 SubmenuRow(title: "Repositories", isExpanded: $detailExpanded)
@@ -744,15 +759,9 @@ private struct MaintenanceCard: View {
     @State private var utilitiesExpanded = false
 
     var body: some View {
-        DashboardCard(title: "Maintenance", systemImage: "wrench.and.screwdriver") {
+        DashboardCard(title: "", systemImage: "wrench.and.screwdriver") {
             VStack(alignment: .leading, spacing: DashboardTheme.itemSpacing) {
-                HStack {
-                    ToolBadge(label: "git", available: viewModel.toolAvailability.git)
-                    ToolBadge(label: "xcodebuild", available: viewModel.toolAvailability.xcodebuild)
-                    ToolBadge(label: "pod", available: viewModel.toolAvailability.pod)
-                }
-
-                SubmenuRow(title: "Utilities", isExpanded: $utilitiesExpanded)
+                SubmenuRow(title: "Cocoapods", isExpanded: $utilitiesExpanded)
 
                 if utilitiesExpanded {
                     VStack(alignment: .leading, spacing: 8) {
@@ -877,17 +886,25 @@ private struct DashboardCard<Content: View, Accessory: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: DashboardTheme.itemSpacing) {
-            HStack {
-                Label(title, systemImage: systemImage)
-                    .font(.headline)
-                    .foregroundStyle(DashboardTheme.primaryText)
-                Spacer(minLength: 8)
-                accessory
+            if !title.isEmpty || !(accessory is EmptyView) {
+                HStack {
+                    if !title.isEmpty {
+                        Label(title, systemImage: systemImage)
+                            .font(.headline)
+                            .foregroundStyle(DashboardTheme.primaryText)
+                    }
+                    Spacer(minLength: 8)
+                    accessory
+                }
             }
             content
         }
 //        .padding(.horizontal, DashboardTheme.sectionHorizontalPadding)
-        .padding(.vertical, DashboardTheme.sectionVerticalPadding)
+        .padding(.vertical, hasHeader ? DashboardTheme.sectionVerticalPadding : 0)
+    }
+
+    private var hasHeader: Bool {
+        !title.isEmpty || !(accessory is EmptyView)
     }
 }
 
@@ -960,6 +977,70 @@ private struct ToolBadge: View {
                 Capsule()
                     .fill(DashboardTheme.meterTrack)
             )
+    }
+}
+
+private struct SimulatorInspectorCard: View {
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: "iphone.gen3")
+                    .frame(width: 16)
+                Text("Simulator Inspector")
+                    .font(.body)
+                Spacer(minLength: 8)
+                Image(systemName: "arrow.up.right.square")
+                    .font(.body)
+                    .foregroundStyle(DashboardTheme.secondaryText)
+            }
+            .foregroundStyle(DashboardTheme.primaryText)
+            .frame(maxWidth: .infinity, minHeight: DashboardTheme.rowMinimumHeight, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: DashboardTheme.rowCornerRadius)
+                    .fill(isHovered ? DashboardTheme.rowHover : .clear)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: DashboardTheme.rowCornerRadius))
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .accessibilityLabel("Open Simulator Inspector")
+    }
+}
+
+private struct SystemCardToolbar: View {
+    let onRefresh: () -> Void
+    let onOpenSettings: () -> Void
+    let onQuit: () -> Void
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ToolbarIconButton(systemImage: "arrow.clockwise", help: "Refresh", action: onRefresh)
+            ToolbarIconButton(systemImage: "gearshape", help: "Open Settings", action: onOpenSettings)
+            ToolbarIconButton(systemImage: "power", help: "Quit XTop", action: onQuit)
+        }
+    }
+}
+
+private struct ToolbarIconButton: View {
+    let systemImage: String
+    let help: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.body)
+                .frame(width: DashboardTheme.rowMinimumHeight, height: DashboardTheme.rowMinimumHeight)
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+        .foregroundStyle(DashboardTheme.secondaryText)
+        .contentShape(Rectangle())
+        .help(help)
+        .accessibilityLabel(help)
     }
 }
 

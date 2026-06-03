@@ -26,21 +26,13 @@ struct MenuBarPanelView: View {
             //                telemetry: viewModel.telemetry
             //            )
             
-            DashboardRootView()
-                .padding(.horizontal, 8)
-            
-            Divider()
-            
-            HStack {
-                Button("Refresh", systemImage: "arrow.clockwise", action: refresh)
-
-                Button("Inspector", systemImage: "iphone.gen3", action: openSimulatorInspector)
-
-                Button("Settings", systemImage: "gearshape", action: openAppSettings)
-
-                Button("Quit", systemImage: "power", action: quit)
-            }
-            .padding(8)
+            DashboardRootView(
+                onRefresh: refresh,
+                onOpenSettings: openAppSettings,
+                onQuit: quit,
+                onOpenSimulatorInspector: openSimulatorInspector
+            )
+            .padding(.horizontal, 8)
         }
         .frame(width: preferences.dashboardDensity.width)
         .task {
