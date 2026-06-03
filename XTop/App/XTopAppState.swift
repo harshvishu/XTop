@@ -7,6 +7,7 @@ struct XTopAppState {
     let sensorSettings: SensorSettingsModel
     let diagnostics: DeveloperDiagnosticsStore
     let viewModel: MacbarViewModel
+    let simulatorInspector: SimulatorInspectorViewModel
 
     init() {
         let services = XTopAppServices()
@@ -32,6 +33,14 @@ struct XTopAppState {
             sensorSettings: sensorSettings,
             diagnostics: diagnostics
         )
+        self.simulatorInspector = SimulatorInspectorViewModel(
+            bookmarkStore: services.simulatorBookmarkStore,
+            discovery: services.simulatorDiscovery,
+            catalog: services.installedAppCatalog,
+            defaultsStore: services.simulatorUserDefaultsStore,
+            keychainClearer: services.simulatorKeychainClearer,
+            lifecycle: services.appLifecycleController
+        )
     }
 }
 
@@ -44,6 +53,14 @@ struct XTopAppServices {
     let gitService: GitContextService
     let gitMonitorService: GitMonitorService
     let maintenanceService: MaintenanceService
+
+    let simulatorBookmarkStore: SimulatorAccessBookmarkStore
+    let simctlClient: SimctlClient
+    let simulatorDiscovery: SimulatorDiscoveryService
+    let installedAppCatalog: InstalledAppCatalog
+    let simulatorUserDefaultsStore: UserDefaultsStore
+    let simulatorKeychainClearer: KeychainClearer
+    let appLifecycleController: AppLifecycleController
 
     init(
         runner: CommandRunner = CommandRunner(),
@@ -65,6 +82,15 @@ struct XTopAppServices {
             runner: runner,
             resolver: resolver
         )
+
+        let simctl = SimctlClient(runner: runner)
+        self.simctlClient = simctl
+        self.simulatorBookmarkStore = SimulatorAccessBookmarkStore()
+        self.simulatorDiscovery = SimulatorDiscoveryService(simctl: simctl)
+        self.installedAppCatalog = InstalledAppCatalog(simctl: simctl)
+        self.simulatorUserDefaultsStore = UserDefaultsStore()
+        self.simulatorKeychainClearer = KeychainClearer()
+        self.appLifecycleController = AppLifecycleController(simctl: simctl)
     }
 }
 
@@ -76,5 +102,6 @@ extension View {
             .environment(state.sensorSettings)
             .environment(state.diagnostics)
             .environment(state.viewModel)
+            .environment(state.simulatorInspector)
     }
 }

@@ -9,7 +9,7 @@ typealias CommandScopeValidator = @Sendable (
 actor CommandRunner {
     private let allowedCommands: Set<String>
 
-    init(allowedCommands: Set<String> = ["git", "xcodebuild", "pod", "rm", "find", "security", "osascript", "defaults", "du", "vm_stat", "sh"]) {
+    init(allowedCommands: Set<String> = ["git", "xcodebuild", "pod", "rm", "find", "security", "osascript", "defaults", "du", "vm_stat", "sh", "xcrun"]) {
         self.allowedCommands = allowedCommands
     }
 

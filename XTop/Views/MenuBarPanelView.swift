@@ -13,6 +13,7 @@ struct MenuBarPanelView: View {
     @Environment(MacbarPreferences.self) private var preferences
     @Environment(MacbarViewModel.self) private var viewModel
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.openWindow) private var openWindow
     @State private var lastRefresh = Date.now
     
     var body: some View {
@@ -32,6 +33,8 @@ struct MenuBarPanelView: View {
             
             HStack {
                 Button("Refresh", systemImage: "arrow.clockwise", action: refresh)
+
+                Button("Inspector", systemImage: "iphone.gen3", action: openSimulatorInspector)
 
                 Button("Settings", systemImage: "gearshape", action: openAppSettings)
 
@@ -62,6 +65,11 @@ struct MenuBarPanelView: View {
     private func openAppSettings() {
         openSettings()
         SettingsWindowActivator.bringToFront()
+    }
+
+    private func openSimulatorInspector() {
+        openWindow(id: "simulator-inspector")
+        NSApp.activate(ignoringOtherApps: true)
     }
 }
 

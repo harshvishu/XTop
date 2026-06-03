@@ -31,6 +31,12 @@ struct XTopApp: App {
             SettingsView()
                 .xtopEnvironment(appState)
         }
+
+        Window("Simulator Inspector", id: "simulator-inspector") {
+            SimulatorInspectorRootView()
+                .xtopEnvironment(appState)
+        }
+        .windowResizability(.contentMinSize)
     }
     
     private func statusTitle(from telemetry: SystemTelemetrySnapshot) -> String {
