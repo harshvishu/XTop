@@ -20,11 +20,13 @@ jobs:
 
       - name: Select Xcode 16
         run: |
-          if [[ -d /Applications/Xcode_16.app ]]; then
-            sudo xcode-select -s /Applications/Xcode_16.app
-          else
-            sudo xcode-select -s /Applications/Xcode.app
+          developer_dir=$(find /Applications -maxdepth 1 -type d -name 'Xcode_16*.app' | sort -V | tail -n 1)/Contents/Developer
+          if [[ ! -d "$developer_dir" ]]; then
+            echo "Unable to locate an installed Xcode 16 toolchain on the runner."
+            ls -1 /Applications | grep '^Xcode' || true
+            exit 1
           fi
+          echo "DEVELOPER_DIR=$developer_dir" >> "$GITHUB_ENV"
 
       - name: Show toolchain info
         run: |
@@ -34,9 +36,12 @@ jobs:
       - name: Determine version
         run: |
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+            echo "APP_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+            echo "ARTIFACT_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
           else
-            echo "VERSION=0.0.0-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+            # Keep MARKETING_VERSION Xcode-compatible on branch/PR builds.
+            echo "APP_VERSION=0.0.0" >> "$GITHUB_ENV"
+            echo "ARTIFACT_VERSION=0.0.0-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
           fi
 
       - name: Build app
@@ -48,14 +53,14 @@ jobs:
             -derivedDataPath build \
             -destination "generic/platform=macOS" \
             CODE_SIGNING_ALLOWED=NO \
-            MARKETING_VERSION="${VERSION}" \
+            MARKETING_VERSION="${APP_VERSION}" \
             CURRENT_PROJECT_VERSION="${GITHUB_RUN_NUMBER}" \
             build
 
       - name: Package artifacts
         run: |
           chmod +x script/package_app.sh
-          script/package_app.sh build/Build/Products/Release/XTop.app "${VERSION}" out
+          script/package_app.sh build/Build/Products/Release/XTop.app "${ARTIFACT_VERSION}" out
 
       - name: Generate checksums
         run: |
@@ -65,7 +70,7 @@ jobs:
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: XTop-${{ env.VERSION }}
+          name: XTop-${{ env.ARTIFACT_VERSION }}
           path: out/*
           retention-days: 14
 
@@ -75,8 +80,8 @@ jobs:
           {
             echo "## Downloads"
             echo
-            echo "- XTop-${VERSION}.dmg"
-            echo "- XTop-${VERSION}.zip"
+            echo "- XTop-${ARTIFACT_VERSION}.dmg"
+            echo "- XTop-${ARTIFACT_VERSION}.zip"
             echo
             echo "## Install"
             echo
