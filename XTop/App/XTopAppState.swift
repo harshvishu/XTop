@@ -26,6 +26,7 @@ struct XTopAppState {
             xcodeService: services.xcodeService,
             resolver: services.resolver,
             gitService: services.gitService,
+            gitMonitorService: services.gitMonitorService,
             maintenanceService: services.maintenanceService,
             preferences: preferences,
             sensorSettings: sensorSettings,
@@ -41,6 +42,7 @@ struct XTopAppServices {
     let telemetryService: SystemTelemetryService
     let xcodeService: XcodeEnvironmentService
     let gitService: GitContextService
+    let gitMonitorService: GitMonitorService
     let maintenanceService: MaintenanceService
 
     init(
@@ -58,6 +60,7 @@ struct XTopAppServices {
         )
         self.xcodeService = DefaultXcodeEnvironmentService(runner: runner)
         self.gitService = DefaultGitContextService(runner: runner)
+        self.gitMonitorService = DefaultGitMonitorService(runner: runner)
         self.maintenanceService = DefaultMaintenanceService(
             runner: runner,
             resolver: resolver

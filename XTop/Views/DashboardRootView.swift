@@ -3,7 +3,6 @@ import SwiftUI
 
 struct DashboardRootView: View {
     @Environment(MacbarViewModel.self) private var viewModel
-    @State private var manualPath = ""
     @State private var podName = ""
     @State private var pendingMaintenanceAction: PendingMaintenanceAction?
 
@@ -14,9 +13,7 @@ struct DashboardRootView: View {
                 DashboardDivider()
                 XcodeUtilityCard(snapshot: viewModel.xcodeSnapshot)
                 DashboardDivider()
-                GitContextCard(
-                    manualPath: $manualPath
-                )
+                GitMonitorCard()
                 DashboardDivider()
                 MaintenanceCard(
                     podName: $podName,
@@ -458,41 +455,68 @@ private struct XcodeUtilityCard: View {
     }
 }
 
-private struct GitContextCard: View {
+private struct GitMonitorCard: View {
     @Environment(MacbarViewModel.self) private var viewModel
-    @Binding var manualPath: String
     @State private var detailExpanded = false
 
     var body: some View {
-        DashboardCard(title: "Git", systemImage: "point.topleft.down.curvedto.point.bottomright.up") {
+        DashboardCard(title: "Git Monitor", systemImage: "point.topleft.down.curvedto.point.bottomright.up") {
             VStack(alignment: .leading, spacing: DashboardTheme.itemSpacing) {
-                HStack {
-                    LabeledValue(label: "Branch", value: viewModel.gitSnapshot.branch ?? "N/A")
-                    Spacer()
-                    LabeledValue(label: "Repository", value: viewModel.gitSnapshot.repositoryRoot == nil ? "None" : "Found")
+
+                if let primary = viewModel.primaryMonitoredRepository {
+                    PrimaryRepositoryRow(
+                        repository: primary,
+                        snapshot: viewModel.gitSnapshot(for: primary.id)
+                    )
+                } else {
+                    Text("No primary repository configured.")
+                        .font(.caption)
+                        .foregroundStyle(DashboardTheme.secondaryText)
                 }
 
-                SubmenuRow(title: "Details", isExpanded: $detailExpanded)
+                SubmenuRow(title: "Repositories", isExpanded: $detailExpanded)
 
                 if detailExpanded {
                     VStack(alignment: .leading, spacing: 7) {
-                        Text("Focused Project: \(viewModel.focusedProject.projectPath ?? "None")")
-                        Text("Source: \(viewModel.focusedProject.source)")
-                        Text("Confidence: \(viewModel.focusedProject.confidence.formatted(.number.precision(.fractionLength(2))))")
-                        Text("Repository: \(viewModel.gitSnapshot.repositoryRoot ?? "Not a repo")")
-
-                        DashboardDetailHeading(title: "Worktrees")
-                        DashboardList(paths: viewModel.gitSnapshot.worktrees.map {
-                            "\($0.isCurrent ? "*" : "-") \($0.path) [\($0.branch)]"
-                        }, emptyText: "No Git worktrees resolved.")
-
-                        TextField("Manual project path", text: $manualPath)
-                            .textFieldStyle(.roundedBorder)
-
-                        HStack {
-                            Button("Set", systemImage: "checkmark", action: setManualPath)
-                            Button("Clear", systemImage: "xmark", action: clearManualPath)
+                        if !viewModel.secondaryMonitoredRepositories.isEmpty {
+                            DashboardDetailHeading(title: "Other Active Repositories")
+                            ForEach(viewModel.secondaryMonitoredRepositories) { repository in
+                                MonitoredRepositoryRow(
+                                    repository: repository,
+                                    snapshot: viewModel.gitSnapshot(for: repository.id)
+                                )
+                            }
                         }
+
+                        if !viewModel.inactiveMonitoredRepositories.isEmpty {
+                            DashboardDetailHeading(title: "Inactive Repositories")
+                            ForEach(viewModel.inactiveMonitoredRepositories) { repository in
+                                InactiveRepositoryRow(repository: repository)
+                            }
+                        }
+
+                        Button("Add Repository…", systemImage: "folder.badge.plus", action: addRepository)
+
+                        DashboardDetailHeading(title: "Base Folders for Discovery")
+                        if viewModel.gitMonitorRegistry.baseFolders.isEmpty {
+                            Text("No base folders configured.")
+                                .foregroundStyle(DashboardTheme.secondaryText)
+                        } else {
+                            ForEach(viewModel.gitMonitorRegistry.baseFolders, id: \.self) { folder in
+                                HStack {
+                                    Text(folder)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                    Spacer()
+                                    Button("Remove", systemImage: "minus.circle", role: .destructive) {
+                                        removeBaseFolder(folder)
+                                    }
+                                    .labelStyle(.iconOnly)
+                                    .buttonStyle(.borderless)
+                                }
+                            }
+                        }
+                        Button("Add Base Folder…", systemImage: "folder.badge.plus", action: addBaseFolder)
                     }
                     .font(.caption)
                     .transition(.opacity)
@@ -501,13 +525,215 @@ private struct GitContextCard: View {
         }
     }
 
-    private func setManualPath() {
-        viewModel.setManualProjectOverride(path: manualPath)
+    private func addRepository() {
+        guard let url = FolderPicker.pick(prompt: "Select Repository Folder") else { return }
+        viewModel.addMonitoredRepository(
+            path: url.path(percentEncoded: false),
+            displayName: nil
+        )
     }
 
-    private func clearManualPath() {
-        manualPath = ""
-        viewModel.setManualProjectOverride(path: nil)
+    private func addBaseFolder() {
+        guard let url = FolderPicker.pick(prompt: "Select Base Folder") else { return }
+        var folders = viewModel.gitMonitorRegistry.baseFolders
+        let path = url.path(percentEncoded: false)
+        if !folders.contains(path) {
+            folders.append(path)
+            viewModel.setGitMonitorBaseFolders(folders)
+        }
+    }
+
+    private func removeBaseFolder(_ folder: String) {
+        let folders = viewModel.gitMonitorRegistry.baseFolders.filter { $0 != folder }
+        viewModel.setGitMonitorBaseFolders(folders)
+    }
+}
+
+private struct PrimaryRepositoryRow: View {
+    @Environment(MacbarViewModel.self) private var viewModel
+    let repository: GitMonitoredRepository
+    let snapshot: GitRepositorySnapshot?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                PrimaryStarButton(repository: repository)
+                Text(repository.displayName)
+                    .font(.subheadline)
+                    .bold()
+                Spacer()
+                SyncStateBadge(state: snapshot?.syncState ?? .idle)
+            }
+
+            HStack(spacing: 12) {
+                LabeledValue(label: "Branch", value: snapshot?.branch ?? "—")
+                Spacer()
+                LabeledValue(label: "Changes", value: changesSummary)
+                Spacer()
+                LabeledValue(label: "Ahead/Behind", value: aheadBehindSummary)
+            }
+
+            ConfiguredUserCaption(snapshot: snapshot)
+        }
+    }
+
+    private var changesSummary: String {
+        guard let snapshot else { return "—" }
+        return "\(snapshot.stagedCount + snapshot.unstagedCount + snapshot.untrackedCount)"
+    }
+
+    private var aheadBehindSummary: String {
+        guard let snapshot else { return "—" }
+        let ahead = snapshot.aheadBy ?? 0
+        let behind = snapshot.behindBy ?? 0
+        return "↑\(ahead) ↓\(behind)"
+    }
+}
+
+private struct MonitoredRepositoryRow: View {
+    @Environment(MacbarViewModel.self) private var viewModel
+    let repository: GitMonitoredRepository
+    let snapshot: GitRepositorySnapshot?
+
+    var body: some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    PrimaryStarButton(repository: repository)
+                    Text(repository.displayName)
+                        .bold()
+                    Spacer()
+                    SyncStateBadge(state: snapshot?.syncState ?? .idle)
+                }
+                HStack {
+                    Text(snapshot?.branch ?? "—")
+                    Spacer()
+                    Text("↑\(snapshot?.aheadBy ?? 0) ↓\(snapshot?.behindBy ?? 0)")
+                        .foregroundStyle(DashboardTheme.secondaryText)
+                }
+                ConfiguredUserCaption(snapshot: snapshot)
+            }
+
+            Button(role: .destructive) {
+                viewModel.removeMonitoredRepository(id: repository.id)
+            } label: {
+                Image(systemName: "minus.circle")
+            }
+            .buttonStyle(.borderless)
+            .help("Remove")
+            .accessibilityLabel("Remove")
+        }
+    }
+}
+
+private struct InactiveRepositoryRow: View {
+    @Environment(MacbarViewModel.self) private var viewModel
+    let repository: GitMonitoredRepository
+
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(repository.displayName)
+                Text(repository.path)
+                    .font(.caption)
+                    .foregroundStyle(DashboardTheme.secondaryText)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer()
+            Button(role: .destructive) {
+                viewModel.removeMonitoredRepository(id: repository.id)
+            } label: {
+                Image(systemName: "minus.circle")
+            }
+            .buttonStyle(.borderless)
+            .help("Remove")
+            .accessibilityLabel("Remove")
+        }
+    }
+}
+
+private struct PrimaryStarButton: View {
+    @Environment(MacbarViewModel.self) private var viewModel
+    let repository: GitMonitoredRepository
+
+    var body: some View {
+        Button {
+            viewModel.togglePrimaryMonitoredRepository(id: repository.id)
+        } label: {
+            Image(systemName: repository.isPrimary ? "star.fill" : "star")
+                .foregroundStyle(repository.isPrimary ? .yellow : DashboardTheme.secondaryText)
+        }
+        .buttonStyle(.borderless)
+        .help(repository.isPrimary ? "Unset Primary" : "Set Primary")
+        .accessibilityLabel(repository.isPrimary ? "Unset Primary" : "Set Primary")
+    }
+}
+
+private struct ConfiguredUserCaption: View {
+    let snapshot: GitRepositorySnapshot?
+
+    var body: some View {
+        if let text = captionText {
+            Text(text)
+                .font(.caption2)
+                .foregroundStyle(DashboardTheme.secondaryText)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+    }
+
+    private var captionText: String? {
+        guard let snapshot else { return nil }
+        let name = snapshot.configuredUserName
+        let email = snapshot.configuredUserEmail
+        switch (name, email) {
+        case let (name?, email?): return "\(name) <\(email)>"
+        case let (name?, nil): return name
+        case let (nil, email?): return email
+        default: return nil
+        }
+    }
+}
+
+private struct SyncStateBadge: View {
+    let state: GitMonitorSyncState
+
+    var body: some View {
+        Label(label, systemImage: symbol)
+            .font(.caption)
+            .foregroundStyle(color)
+    }
+
+    private var label: String {
+        switch state {
+        case .idle: return "Idle"
+        case .syncingLocal: return "Local Sync"
+        case .syncingRemote: return "Remote Sync"
+        case .healthy: return "Healthy"
+        case .authRequired: return "Auth Required"
+        case .timeout: return "Timed Out"
+        case .failed: return "Failed"
+        }
+    }
+
+    private var symbol: String {
+        switch state {
+        case .idle: return "circle"
+        case .syncingLocal, .syncingRemote: return "arrow.triangle.2.circlepath"
+        case .healthy: return "checkmark.circle.fill"
+        case .authRequired: return "key.fill"
+        case .timeout: return "clock.badge.exclamationmark"
+        case .failed: return "exclamationmark.triangle.fill"
+        }
+    }
+
+    private var color: Color {
+        switch state {
+        case .healthy: return .green
+        case .authRequired, .timeout, .failed: return .red
+        default: return DashboardTheme.secondaryText
+        }
     }
 }
 
@@ -755,6 +981,7 @@ private struct SettingsIconButton: View {
 
     private func openDashboardSettings() {
         openSettings()
+        SettingsWindowActivator.bringToFront()
     }
 }
 
@@ -777,6 +1004,7 @@ private struct SettingsWarningButton: View {
 
     private func openSensorSettings() {
         openSettings()
+        SettingsWindowActivator.bringToFront()
     }
 }
 

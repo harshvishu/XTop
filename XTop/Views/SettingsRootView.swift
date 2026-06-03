@@ -32,7 +32,15 @@ struct SettingsRootView: View {
                     systemImage: "hammer"
                 )
             }
-            
+
+            GitMonitorSettingsView()
+            .tabItem {
+                Label(
+                    "Git Monitor",
+                    systemImage: "point.topleft.down.curvedto.point.bottomright.up"
+                )
+            }
+
             DiagnosticsSettingsView()
             .tabItem {
                 Label(

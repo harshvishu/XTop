@@ -12,6 +12,7 @@ struct MenuBarPanelView: View {
     @AppStorage("showsRefreshSeconds") private var showsRefreshSeconds = false
     @Environment(MacbarPreferences.self) private var preferences
     @Environment(MacbarViewModel.self) private var viewModel
+    @Environment(\.openSettings) private var openSettings
     @State private var lastRefresh = Date.now
     
     var body: some View {
@@ -31,11 +32,9 @@ struct MenuBarPanelView: View {
             
             HStack {
                 Button("Refresh", systemImage: "arrow.clockwise", action: refresh)
-                
-                SettingsLink {
-                    Label("Settings", systemImage: "gearshape")
-                }
-                
+
+                Button("Settings", systemImage: "gearshape", action: openAppSettings)
+
                 Button("Quit", systemImage: "power", action: quit)
             }
             .padding(8)
@@ -58,6 +57,11 @@ struct MenuBarPanelView: View {
     
     private func quit() {
         NSApplication.shared.terminate(nil)
+    }
+
+    private func openAppSettings() {
+        openSettings()
+        SettingsWindowActivator.bringToFront()
     }
 }
 

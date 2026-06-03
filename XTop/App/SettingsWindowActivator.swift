@@ -104,4 +104,29 @@ final class SettingsWindowActivator: NSObject {
         }
         return false
     }
+
+    /// Activates the app and brings the Settings window to the front.
+    ///
+    /// Call this immediately after `openSettings()`. SwiftUI may need a
+    /// run-loop tick to materialize the window on first open, so we retry
+    /// a couple of times before giving up. Safe to call when the window
+    /// is already open — it just re-orders it above other apps.
+    static func bringToFront() {
+        NSApp.activate(ignoringOtherApps: true)
+        front()
+        // Retry shortly after to cover the first-open case where the
+        // SwiftUI Settings window has not been instantiated yet.
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(80))
+            front()
+            try? await Task.sleep(for: .milliseconds(160))
+            front()
+        }
+    }
+
+    private static func front() {
+        guard let window = NSApp.windows.first(where: isSettingsWindow) else { return }
+        window.orderFrontRegardless()
+        window.makeKeyAndOrderFront(nil)
+    }
 }

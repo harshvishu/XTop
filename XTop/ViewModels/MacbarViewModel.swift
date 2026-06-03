@@ -10,6 +10,9 @@ final class MacbarViewModel {
     private(set) var gitSnapshot: GitContextSnapshot
     private(set) var maintenanceLogs: [MaintenanceActionResult]
     private(set) var toolAvailability: ToolAvailability
+    private(set) var gitMonitorRegistry: GitMonitorRegistry
+    private(set) var gitMonitorProfiles: [GitMonitorAccountProfile]
+    private(set) var gitMonitorSnapshots: [UUID: GitRepositorySnapshot]
 
     let preferences: MacbarPreferences
     let sensorSettings: SensorSettingsModel
@@ -19,6 +22,9 @@ final class MacbarViewModel {
 
     @ObservationIgnored
     private let maintenanceService: MaintenanceService
+
+    @ObservationIgnored
+    private let gitMonitorService: GitMonitorService
 
     @ObservationIgnored
     private let developerContextCollector: DeveloperContextCollector
@@ -33,6 +39,9 @@ final class MacbarViewModel {
     private var developerContextTask: Task<Void, Never>?
 
     @ObservationIgnored
+    private var gitMonitorRefreshTask: Task<Void, Never>?
+
+    @ObservationIgnored
     private var lastDeveloperRefresh = Date.distantPast
 
     @ObservationIgnored
@@ -43,6 +52,7 @@ final class MacbarViewModel {
         xcodeService: XcodeEnvironmentService,
         resolver: FocusedProjectResolving,
         gitService: GitContextService,
+        gitMonitorService: GitMonitorService,
         maintenanceService: MaintenanceService,
         preferences: MacbarPreferences,
         sensorSettings: SensorSettingsModel,
@@ -50,6 +60,7 @@ final class MacbarViewModel {
     ) {
         self.telemetryService = telemetryService
         self.maintenanceService = maintenanceService
+        self.gitMonitorService = gitMonitorService
         self.preferences = preferences
         self.sensorSettings = sensorSettings
         self.diagnostics = diagnostics
@@ -63,6 +74,9 @@ final class MacbarViewModel {
 
         self.maintenanceLogs = []
         self.toolAvailability = .unknown
+        self.gitMonitorRegistry = GitMonitorRegistry()
+        self.gitMonitorProfiles = []
+        self.gitMonitorSnapshots = [:]
         self.telemetry = .empty
         self.xcodeSnapshot = .empty
         self.focusedProject = .unresolved
@@ -74,6 +88,7 @@ final class MacbarViewModel {
     deinit {
         samplingTask?.cancel()
         developerContextTask?.cancel()
+        gitMonitorRefreshTask?.cancel()
     }
 
     func startSampling() {
@@ -107,6 +122,7 @@ final class MacbarViewModel {
     func refresh() async {
         await refreshTelemetry()
         await refreshDeveloperContextIfNeeded(force: true)
+        await refreshGitMonitor(force: true)
     }
 
     func refreshWithBudget() async {
@@ -117,6 +133,10 @@ final class MacbarViewModel {
 
         if shouldRefreshDeveloperContext {
             await refreshDeveloperContextIfNeeded()
+        }
+
+        if shouldRefreshDeveloperContext {
+            await refreshGitMonitor()
         }
 
         let elapsed = Date.now
@@ -172,6 +192,184 @@ final class MacbarViewModel {
         }
 
         await developerContextTask?.value
+    }
+
+    private func refreshGitMonitor(force: Bool = false) async {
+        if force {
+            gitMonitorRefreshTask?.cancel()
+            gitMonitorRefreshTask = nil
+        }
+
+        guard gitMonitorRefreshTask == nil else {
+            return
+        }
+
+        gitMonitorRefreshTask = Task { [weak self] in
+            guard let self else { return }
+
+            _ = await self.gitMonitorService.runDeepDiscovery()
+            let registry = await self.gitMonitorService.loadRegistry()
+            let profiles = await self.gitMonitorService.loadProfiles()
+            let snapshots = await self.gitMonitorService.refreshAllActiveRepositories()
+
+            guard !Task.isCancelled else {
+                return
+            }
+
+            self.gitMonitorRegistry = registry
+            self.gitMonitorProfiles = profiles
+            self.gitMonitorSnapshots = Dictionary(
+                uniqueKeysWithValues: snapshots.map { ($0.repositoryID, $0) }
+            )
+            self.gitMonitorRefreshTask = nil
+        }
+
+        await gitMonitorRefreshTask?.value
+    }
+
+    var primaryMonitoredRepository: GitMonitoredRepository? {
+        gitMonitorRegistry.repositories.first {
+            $0.isPrimary && $0.isActive
+        } ?? gitMonitorRegistry.repositories.first { $0.isActive }
+    }
+
+    var secondaryMonitoredRepositories: [GitMonitoredRepository] {
+        guard let primaryID = primaryMonitoredRepository?.id else {
+            return gitMonitorRegistry.repositories.filter { $0.isActive }
+        }
+
+        return gitMonitorRegistry.repositories.filter {
+            $0.isActive && $0.id != primaryID
+        }
+    }
+
+    var inactiveMonitoredRepositories: [GitMonitoredRepository] {
+        gitMonitorRegistry.repositories.filter { !$0.isActive }
+    }
+
+    func gitSnapshot(for repositoryID: UUID) -> GitRepositorySnapshot? {
+        gitMonitorSnapshots[repositoryID]
+    }
+
+    func setGitMonitorBaseFolders(_ folders: [String]) {
+        Task { [weak self] in
+            guard let self else { return }
+            await self.gitMonitorService.setBaseFolders(folders)
+            await self.refreshGitMonitor(force: true)
+        }
+    }
+
+    func addMonitoredRepository(path: String, displayName: String?) {
+        Task { [weak self] in
+            guard let self else { return }
+            _ = await self.gitMonitorService.upsertRepository(
+                path: path,
+                displayName: displayName,
+                boundAccountProfileID: nil
+            )
+            await self.refreshGitMonitor(force: true)
+        }
+    }
+
+    func removeMonitoredRepository(id: UUID) {
+        Task { [weak self] in
+            guard let self else { return }
+            await self.gitMonitorService.removeRepository(id: id)
+            await self.reloadGitRegistry()
+            await self.refreshGitMonitor(force: true)
+        }
+    }
+
+    func setPrimaryMonitoredRepository(id: UUID) {
+        Task { [weak self] in
+            guard let self else { return }
+            await self.gitMonitorService.setPrimaryRepository(id: id)
+            await self.reloadGitRegistry()
+            await self.refreshGitMonitor(force: true)
+        }
+    }
+
+    /// Toggle the primary flag for a repository: if it is currently primary,
+    /// clear it; otherwise promote it to primary.
+    func togglePrimaryMonitoredRepository(id: UUID) {
+        let isPrimary = gitMonitorRegistry.repositories.first(where: { $0.id == id })?.isPrimary ?? false
+        Task { [weak self] in
+            guard let self else { return }
+            if isPrimary {
+                await self.gitMonitorService.clearPrimaryRepository(id: id)
+            } else {
+                await self.gitMonitorService.setPrimaryRepository(id: id)
+            }
+            await self.reloadGitRegistry()
+            await self.refreshGitMonitor(force: true)
+        }
+    }
+
+    /// Reload just the persisted registry/profiles into local state without
+    /// running the (slow) deep discovery or remote snapshot refresh. Used to
+    /// reflect quick local mutations (set primary, remove, etc.) in the UI
+    /// immediately instead of waiting on `git fetch`.
+    private func reloadGitRegistry() async {
+        let registry = await gitMonitorService.loadRegistry()
+        let profiles = await gitMonitorService.loadProfiles()
+        gitMonitorRegistry = registry
+        gitMonitorProfiles = profiles
+    }
+
+    func bindRepository(id: UUID, accountProfileID: UUID?) {
+        Task { [weak self] in
+            guard let self else { return }
+            await self.gitMonitorService.bindRepository(id: id, accountProfileID: accountProfileID)
+            await self.refreshGitMonitor(force: true)
+        }
+    }
+
+    func loginHTTPSProfile(
+        displayName: String,
+        host: String,
+        username: String,
+        token: String
+    ) {
+        Task { [weak self] in
+            guard let self else { return }
+            _ = try? await self.gitMonitorService.createHTTPSProfile(
+                displayName: displayName,
+                host: host,
+                username: username,
+                token: token
+            )
+            await self.refreshGitMonitor(force: true)
+        }
+    }
+
+    func loginSSHProfile(
+        displayName: String,
+        host: String,
+        username: String,
+        privateKeyPath: String,
+        publicKeyFingerprint: String,
+        passphrase: String?
+    ) {
+        Task { [weak self] in
+            guard let self else { return }
+            _ = try? await self.gitMonitorService.createSSHProfile(
+                displayName: displayName,
+                host: host,
+                username: username,
+                privateKeyPath: privateKeyPath,
+                publicKeyFingerprint: publicKeyFingerprint,
+                passphrase: passphrase
+            )
+            await self.refreshGitMonitor(force: true)
+        }
+    }
+
+    func logoutProfile(id: UUID) {
+        Task { [weak self] in
+            guard let self else { return }
+            try? await self.gitMonitorService.logoutProfile(id: id)
+            await self.refreshGitMonitor(force: true)
+        }
     }
 
     func performMaintenanceAction(

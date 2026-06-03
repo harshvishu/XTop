@@ -34,6 +34,7 @@ actor CommandRunner {
         command: String,
         arguments: [String],
         workingDirectory: String,
+        environment: [String: String]? = nil,
         validateScope: CommandScopeValidator? = nil
     ) -> CommandResult {
         let startedAt = Date.now
@@ -73,6 +74,14 @@ actor CommandRunner {
         process.arguments = [command] + arguments
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
+
+        if let environment {
+            var merged = ProcessInfo.processInfo.environment
+            for (key, value) in environment {
+                merged[key] = value
+            }
+            process.environment = merged
+        }
 
         do {
             try process.run()

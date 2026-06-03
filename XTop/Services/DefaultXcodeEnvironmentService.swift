@@ -53,17 +53,33 @@ actor DefaultXcodeEnvironmentService: XcodeEnvironmentService {
 
         if customDefaults.exitStatus == 0 {
             let customPath = customDefaults.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !customPath.isEmpty {
-                paths.append(customPath)
+            // Xcode persists the literal string "Default" when the user has
+            // not configured a custom location; ignore it.
+            if !customPath.isEmpty, customPath != "Default" {
+                paths.append(expandingTilde(in: customPath))
             }
         }
 
-        return Array(Set(paths)).map { path in
-            DerivedDataLocation(
-                path: path,
-                sizeBytes: directorySize(atPath: path)
+        let fm = FileManager.default
+        var seen = Set<String>()
+        var locations: [DerivedDataLocation] = []
+        for path in paths {
+            let resolved = (path as NSString).standardizingPath
+            guard seen.insert(resolved).inserted else { continue }
+            guard fm.fileExists(atPath: resolved) else { continue }
+            locations.append(
+                DerivedDataLocation(
+                    path: resolved,
+                    sizeBytes: directorySize(atPath: resolved)
+                )
             )
         }
+        return locations
+    }
+
+    private func expandingTilde(in path: String) -> String {
+        guard path.hasPrefix("~") else { return path }
+        return (path as NSString).expandingTildeInPath
     }
 
     private func detectOpenProjects() async -> [XcodeProjectUsage] {
@@ -112,19 +128,38 @@ actor DefaultXcodeEnvironmentService: XcodeEnvironmentService {
     }
 
     private func collectProvisioningProfiles() async -> (items: [ProvisioningProfileSummary], errors: [String]) {
-        let profilesPath = (homeDirectory as NSString)
-            .appendingPathComponent("Library/MobileDevice/Provisioning Profiles")
-        let fm = FileManager.default
+        // Xcode 16+ stores provisioning profiles under
+        // ~/Library/Developer/Xcode/UserData/Provisioning Profiles.
+        // Older installs still use ~/Library/MobileDevice/Provisioning Profiles.
+        // Check both so we surface profiles regardless of Xcode version.
+        let candidatePaths = [
+            (homeDirectory as NSString)
+                .appendingPathComponent("Library/Developer/Xcode/UserData/Provisioning Profiles"),
+            (homeDirectory as NSString)
+                .appendingPathComponent("Library/MobileDevice/Provisioning Profiles")
+        ]
 
-        guard let files = try? fm.contentsOfDirectory(atPath: profilesPath) else {
+        let fm = FileManager.default
+        var entries: [(directory: String, file: String)] = []
+        var errors: [String] = []
+        var foundAnyDirectory = false
+
+        for directory in candidatePaths {
+            guard let files = try? fm.contentsOfDirectory(atPath: directory) else { continue }
+            foundAnyDirectory = true
+            for file in files where file.hasSuffix(".mobileprovision") || file.hasSuffix(".provisionprofile") {
+                entries.append((directory, file))
+            }
+        }
+
+        if !foundAnyDirectory {
             return ([], ["Provisioning profiles directory not found."])
         }
 
         var summaries: [ProvisioningProfileSummary] = []
-        var errors: [String] = []
 
-        for file in files where file.hasSuffix(".mobileprovision") {
-            let fullPath = (profilesPath as NSString).appendingPathComponent(file)
+        for entry in entries {
+            let fullPath = (entry.directory as NSString).appendingPathComponent(entry.file)
             let decode = await runner.run(
                 command: "security",
                 arguments: ["cms", "-D", "-i", fullPath],
@@ -132,11 +167,11 @@ actor DefaultXcodeEnvironmentService: XcodeEnvironmentService {
             )
 
             if decode.exitStatus != 0 {
-                errors.append("Failed to decode profile: \(file)")
+                errors.append("Failed to decode profile: \(entry.file)")
                 continue
             }
 
-            let name = extract(xml: decode.stdout, key: "Name") ?? file
+            let name = extract(xml: decode.stdout, key: "Name") ?? entry.file
             let expiration = extract(xml: decode.stdout, key: "ExpirationDate") ?? "Unknown"
             let team = extractTeamIdentifier(xml: decode.stdout) ?? "Unknown"
 

@@ -19,6 +19,22 @@ protocol GitContextService: Sendable {
     func collectGitContext(for projectResolution: FocusedProjectResolution) async -> GitContextSnapshot
 }
 
+protocol GitMonitorService: Sendable {
+    func loadRegistry() async -> GitMonitorRegistry
+    func loadProfiles() async -> [GitMonitorAccountProfile]
+    func setBaseFolders(_ folders: [String]) async
+    func upsertRepository(path: String, displayName: String?, boundAccountProfileID: UUID?) async -> GitMonitoredRepository
+    func removeRepository(id: UUID) async
+    func bindRepository(id: UUID, accountProfileID: UUID?) async
+    func setPrimaryRepository(id: UUID) async
+    func clearPrimaryRepository(id: UUID) async
+    func createHTTPSProfile(displayName: String, host: String, username: String, token: String) async throws -> GitMonitorAccountProfile
+    func createSSHProfile(displayName: String, host: String, username: String, privateKeyPath: String, publicKeyFingerprint: String, passphrase: String?) async throws -> GitMonitorAccountProfile
+    func logoutProfile(id: UUID) async throws
+    func runDeepDiscovery() async -> [GitMonitoredRepository]
+    func refreshAllActiveRepositories() async -> [GitRepositorySnapshot]
+}
+
 protocol MaintenanceService: Sendable {
     func checkToolAvailability() async -> ToolAvailability
     func cleanDerivedData(targetPath: String?) async -> MaintenanceActionResult
