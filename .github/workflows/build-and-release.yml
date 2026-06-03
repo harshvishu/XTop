@@ -1,0 +1,98 @@
+name: Build and Release macOS App
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode 16
+        run: |
+          if [[ -d /Applications/Xcode_16.app ]]; then
+            sudo xcode-select -s /Applications/Xcode_16.app
+          else
+            sudo xcode-select -s /Applications/Xcode.app
+          fi
+
+      - name: Show toolchain info
+        run: |
+          xcodebuild -version
+          sw_vers
+
+      - name: Determine version
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          else
+            echo "VERSION=0.0.0-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build app
+        run: |
+          xcodebuild \
+            -project XTop.xcodeproj \
+            -scheme XTop \
+            -configuration Release \
+            -derivedDataPath build \
+            -destination "generic/platform=macOS" \
+            CODE_SIGNING_ALLOWED=NO \
+            MARKETING_VERSION="${VERSION}" \
+            CURRENT_PROJECT_VERSION="${GITHUB_RUN_NUMBER}" \
+            build
+
+      - name: Package artifacts
+        run: |
+          chmod +x script/package_app.sh
+          script/package_app.sh build/Build/Products/Release/XTop.app "${VERSION}" out
+
+      - name: Generate checksums
+        run: |
+          cd out
+          shasum -a 256 XTop-*.dmg XTop-*.zip > SHA256SUMS.txt
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: XTop-${{ env.VERSION }}
+          path: out/*
+          retention-days: 14
+
+      - name: Build release notes
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          {
+            echo "## Downloads"
+            echo
+            echo "- XTop-${VERSION}.dmg"
+            echo "- XTop-${VERSION}.zip"
+            echo
+            echo "## Install"
+            echo
+            echo "1. Download the DMG and drag XTop.app into Applications."
+            echo "2. On first launch, right-click XTop.app and choose Open."
+            echo "3. If macOS still blocks launch, run: xattr -dr com.apple.quarantine /Applications/XTop.app"
+            echo
+            echo "This build is ad-hoc signed and not notarized."
+            echo
+            echo "## SHA-256"
+            cat out/SHA256SUMS.txt
+          } > out/RELEASE_NOTES.md
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out/*
+          body_path: out/RELEASE_NOTES.md
