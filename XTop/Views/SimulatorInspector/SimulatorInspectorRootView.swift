@@ -63,16 +63,9 @@ struct SimulatorInspectorRootView: View {
     private var inspectorToolbar: some ToolbarContent {
         ToolbarItemGroup {
             Button {
-                Task { await viewModel.refreshSimulators() }
-            } label: {
-                Label("Refresh", systemImage: "arrow.clockwise")
-            }
-            .disabled(viewModel.isRefreshingSimulators)
-
-            Button {
                 Task { await viewModel.relaunchSelectedApp() }
             } label: {
-                Label("Relaunch App", systemImage: "arrow.triangle.2.circlepath")
+                Label("Relaunch App", systemImage: "paperplane.fill")
             }
             .disabled(viewModel.selectedBundleIdentifier == nil)
         }
@@ -171,7 +164,7 @@ private struct RelaunchPill: View {
 
     var body: some View {
         HStack(spacing: DesignSystem.Spacing.sm) {
-            Image(systemName: "arrow.triangle.2.circlepath")
+            Image(systemName: "paperplane.fill")
                 .foregroundStyle(DesignSystem.Colors.accent)
             Text("Edits queued — relaunch the app to apply.")
                 .font(DesignSystem.Typography.rowSecondary)

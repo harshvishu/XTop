@@ -5,6 +5,7 @@ struct UserDefaultsTabView: View {
     @State private var editingEntry: UserDefaultsEntry?
     @State private var showAddSheet = false
     @State private var entryToDelete: UserDefaultsEntry?
+    @State private var searchText = ""
 
     var body: some View {
         Group {
@@ -52,10 +53,15 @@ struct UserDefaultsTabView: View {
         )
     }
 
+    private var filteredEntries: [UserDefaultsEntry] {
+        FuzzySearch.filter(viewModel.entries, query: searchText) { $0.key }
+    }
+
     private var table: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text("\(viewModel.entries.count) entries")
+            HStack(spacing: DesignSystem.Spacing.sm) {
+                searchField
+                Text(countLabel)
                     .font(DesignSystem.Typography.rowSecondary)
                     .foregroundStyle(DesignSystem.Colors.secondaryText)
                 Spacer()
@@ -76,8 +82,10 @@ struct UserDefaultsTabView: View {
 
             if viewModel.entries.isEmpty {
                 emptyState("No UserDefaults entries yet.")
+            } else if filteredEntries.isEmpty {
+                emptyState("No entries match \u{201C}\(searchText)\u{201D}.")
             } else {
-                Table(viewModel.entries) {
+                Table(filteredEntries) {
                     TableColumn("Key") { entry in
                         Text(entry.key)
                             .font(DesignSystem.Typography.monoRow)
@@ -122,6 +130,42 @@ struct UserDefaultsTabView: View {
                 }
             }
         }
+    }
+
+    private var searchField: some View {
+        HStack(spacing: DesignSystem.Spacing.xs) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(DesignSystem.Colors.secondaryText)
+            TextField("Search keys", text: $searchText)
+                .textFieldStyle(.plain)
+                .font(DesignSystem.Typography.body)
+            if !searchText.isEmpty {
+                Button {
+                    searchText = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(DesignSystem.Colors.secondaryText)
+                }
+                .buttonStyle(.plain)
+                .help("Clear")
+            }
+        }
+        .padding(.horizontal, DesignSystem.Spacing.sm)
+        .padding(.vertical, 4)
+        .background(
+            RoundedRectangle(cornerRadius: DesignSystem.Radius.row)
+                .fill(Color.primary.opacity(0.06))
+        )
+        .frame(maxWidth: 260)
+    }
+
+    private var countLabel: String {
+        let total = viewModel.entries.count
+        let shown = filteredEntries.count
+        if searchText.isEmpty || shown == total {
+            return "\(total) entries"
+        }
+        return "\(shown) of \(total)"
     }
 
     private func emptyState(_ text: String) -> some View {
