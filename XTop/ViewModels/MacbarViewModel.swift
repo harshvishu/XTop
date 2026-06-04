@@ -125,6 +125,13 @@ final class MacbarViewModel {
         await refreshGitMonitor(force: true)
     }
 
+    /// Refreshes only the developer-context snapshot (tool availability, Xcode
+    /// project, Git, focused project). Useful for Settings views that need
+    /// fresh `toolAvailability` without paying the cost of a full `refresh()`.
+    func refreshDeveloperContext() async {
+        await refreshDeveloperContextIfNeeded(force: true)
+    }
+
     func refreshWithBudget() async {
         let started = Date.now
         let previousTelemetry = telemetry

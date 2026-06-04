@@ -4,6 +4,7 @@ import SwiftUI
 struct SimulatorInspectorRootView: View {
     @Environment(SimulatorInspectorViewModel.self) private var viewModel
     @Environment(CameraInjectionViewModel.self) private var cameraViewModel
+    @AppStorage("SimulatorInspector.cameraInjectionEnabled") private var cameraInjectionEnabled = false
     @State private var selectedTab: InspectorTab = .userDefaults
 
     var body: some View {
@@ -65,7 +66,7 @@ struct SimulatorInspectorRootView: View {
     private var visibleTabs: [InspectorTab] {
         InspectorTab.allCases.filter { tab in
             switch tab {
-            case .camera: return SimulatorInspectorFeatureFlags.cameraInjectionEnabled
+            case .camera: return cameraInjectionEnabled
             default: return true
             }
         }
@@ -74,10 +75,16 @@ struct SimulatorInspectorRootView: View {
     @ToolbarContentBuilder
     private var inspectorToolbar: some ToolbarContent {
         ToolbarItemGroup {
+            Toggle(isOn: $cameraInjectionEnabled) {
+                Label("Camera Injection", systemImage: "camera.viewfinder")
+            }
+            .toggleStyle(.button)
+            .help("Enable the Camera tab to stream Mac-side frames into iOS simulator apps (experimental).")
+
             Button {
                 Task { await viewModel.relaunchSelectedApp() }
             } label: {
-                Label("Relaunch App", systemImage: "paperplane.fill")
+                Label("Relaunch App", systemImage: "airplane.departure")
             }
             .disabled(viewModel.selectedBundleIdentifier == nil)
         }

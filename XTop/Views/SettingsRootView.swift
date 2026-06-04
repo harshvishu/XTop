@@ -9,6 +9,14 @@ struct SettingsRootView: View {
         
         TabView {
             
+            DeveloperToolSettingsView()
+            .tabItem {
+                Label(
+                    "Developer Tools",
+                    systemImage: "hammer"
+                )
+            }
+            
             GeneralSettingsView()
             .tabItem {
                 Label(
@@ -24,28 +32,12 @@ struct SettingsRootView: View {
                     systemImage: "sensor"
                 )
             }
-            
-            DeveloperToolSettingsView()
-            .tabItem {
-                Label(
-                    "Developer Tools",
-                    systemImage: "hammer"
-                )
-            }
 
             GitMonitorSettingsView()
             .tabItem {
                 Label(
                     "Git Monitor",
                     systemImage: "point.topleft.down.curvedto.point.bottomright.up"
-                )
-            }
-
-            DiagnosticsSettingsView()
-            .tabItem {
-                Label(
-                    "Diagnostics",
-                    systemImage: "stethoscope"
                 )
             }
         }
@@ -205,6 +197,7 @@ private struct DeveloperToolSettingsView: View {
     
     @Environment(MacbarPreferences.self) private var preferences
     @Environment(DeveloperDiagnosticsStore.self) private var diagnostics
+    @Environment(MacbarViewModel.self) private var viewModel
     @AppStorage("SimulatorInspector.cameraInjectionEnabled") private var cameraInjectionEnabled = false
     
     var body: some View {
@@ -234,7 +227,7 @@ private struct DeveloperToolSettingsView: View {
                 .foregroundStyle(.secondary)
             }
             
-            Section("Tool Availability") {
+            Section {
                 
                 ToolAvailabilityRow(
                     title: "Git",
@@ -250,6 +243,41 @@ private struct DeveloperToolSettingsView: View {
                     title: "CocoaPods",
                     isAvailable: diagnostics.toolAvailability.pod
                 )
+            } header: {
+                HStack {
+                    Text("Tool Availability")
+                    Spacer()
+                    if let lastScan = diagnostics.lastDeveloperScan {
+                        Text("checked \(lastScan.formatted(.relative(presentation: .numeric)))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .textCase(nil)
+                    }
+                    Button {
+                        Task { await viewModel.refreshDeveloperContext() }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Re-check tool availability")
+                }
+            } footer: {
+                Text(
+                    "GUI apps inherit a minimal PATH (`/usr/bin:/bin:/usr/sbin:/sbin`). Homebrew tools at `/usr/local/bin` or `/opt/homebrew/bin` will not be found unless symlinked into `/usr/local/bin` or invoked via an absolute path."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            
+            if !diagnostics.recentMaintenanceLogs.isEmpty {
+                Section("Recent Operations") {
+                    ForEach(diagnostics.recentMaintenanceLogs) { log in
+                        LabeledContent(log.action) {
+                            Text(log.summary)
+                                .multilineTextAlignment(.trailing)
+                        }
+                    }
+                }
             }
             
             Section("Utility Scope") {
@@ -262,101 +290,9 @@ private struct DeveloperToolSettingsView: View {
         }
         .formStyle(.grouped)
         .padding()
-    }
-}
-
-// MARK: - Diagnostics Settings
-
-private struct DiagnosticsSettingsView: View {
-    
-    @Environment(SensorSettingsModel.self) private var sensors
-    @Environment(DeveloperDiagnosticsStore.self) private var diagnostics
-    
-    var body: some View {
-        
-        Form {
-            
-            Section("Sensor Diagnostics") {
-                
-                LabeledContent(
-                    "Setup State",
-                    value: sensors.setupState.title
-                )
-                
-                Text(
-                    sensors.lastAccessTestSummary
-                )
-                .foregroundStyle(.secondary)
-            }
-            
-            Section("Developer Scan") {
-                
-                LabeledContent(
-                    "Last Scan"
-                ) {
-                    
-                    Text(
-                        lastScanSummary
-                    )
-                }
-                
-                ToolAvailabilityRow(
-                    title: "Git",
-                    isAvailable: diagnostics.toolAvailability.git
-                )
-                
-                ToolAvailabilityRow(
-                    title: "xcodebuild",
-                    isAvailable: diagnostics.toolAvailability.xcodebuild
-                )
-                
-                ToolAvailabilityRow(
-                    title: "CocoaPods",
-                    isAvailable: diagnostics.toolAvailability.pod
-                )
-            }
-            
-            Section("Recent Operations") {
-                
-                if diagnostics
-                    .recentMaintenanceLogs
-                    .isEmpty {
-                    
-                    Text(
-                        "No maintenance actions recorded."
-                    )
-                    .foregroundStyle(.secondary)
-                    
-                } else {
-                    
-                    ForEach(
-                        diagnostics.recentMaintenanceLogs
-                    ) { log in
-                        
-                        LabeledContent(
-                            log.action
-                        ) {
-                            
-                            Text(
-                                log.summary
-                            )
-                            .multilineTextAlignment(.trailing)
-                        }
-                    }
-                }
-            }
+        .task {
+            await viewModel.refreshDeveloperContext()
         }
-        .formStyle(.grouped)
-        .padding()
-    }
-    
-    private var lastScanSummary: String {
-        
-        diagnostics.lastDeveloperScan?
-            .formatted(
-                date: .abbreviated,
-                time: .standard
-            ) ?? "Not scanned yet"
     }
 }
 

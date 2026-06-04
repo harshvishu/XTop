@@ -20,6 +20,15 @@ actor CommandRunner {
         process.arguments = ["which", command]
         process.standardOutput = nullOutput
         process.standardError = nullOutput
+        // GUI apps launched from Finder inherit a minimal PATH
+        // (`/usr/bin:/bin:/usr/sbin:/sbin`). Extend it so Homebrew tools
+        // such as `pod` at `/opt/homebrew/bin` or `/usr/local/bin` are
+        // discoverable by the `which` probe.
+        var environment = ProcessInfo.processInfo.environment
+        let extraPaths = "/usr/local/bin:/opt/homebrew/bin"
+        let existingPath = environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+        environment["PATH"] = "\(existingPath):\(extraPaths)"
+        process.environment = environment
 
         do {
             try process.run()
