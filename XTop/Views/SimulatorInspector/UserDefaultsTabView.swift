@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct UserDefaultsTabView: View {
@@ -89,6 +90,12 @@ struct UserDefaultsTabView: View {
                     TableColumn("Key") { entry in
                         Text(entry.key)
                             .font(DesignSystem.Typography.monoRow)
+                            .textSelection(.enabled)
+                            .contextMenu {
+                                Button("Copy Key", systemImage: "doc.on.doc") {
+                                    copyToPasteboard(entry.key)
+                                }
+                            }
                     }
                     .width(min: 160, ideal: 260)
 
@@ -104,10 +111,24 @@ struct UserDefaultsTabView: View {
                             .font(DesignSystem.Typography.monoRow)
                             .lineLimit(1)
                             .truncationMode(.tail)
+                            .textSelection(.enabled)
+                            .contextMenu {
+                                Button("Copy Value", systemImage: "doc.on.doc") {
+                                    copyToPasteboard(entry.displayValue)
+                                }
+                            }
                     }
 
                     TableColumn("") { entry in
                         HStack(spacing: DesignSystem.Spacing.xs) {
+                            Button("Copy", systemImage: "doc.on.doc") {
+                                copyToPasteboard("\(entry.key):\(entry.displayValue)")
+                            }
+                            .labelStyle(.iconOnly)
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .help("Copy key:value")
+
                             Button("Edit", systemImage: "pencil") {
                                 editingEntry = entry
                             }
@@ -126,7 +147,7 @@ struct UserDefaultsTabView: View {
                             .help("Delete entry")
                         }
                     }
-                    .width(min: 90, ideal: 100, max: 120)
+                    .width(min: 130, ideal: 140, max: 160)
                 }
             }
         }
@@ -166,6 +187,12 @@ struct UserDefaultsTabView: View {
             return "\(total) entries"
         }
         return "\(shown) of \(total)"
+    }
+
+    private func copyToPasteboard(_ string: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(string, forType: .string)
     }
 
     private func emptyState(_ text: String) -> some View {
