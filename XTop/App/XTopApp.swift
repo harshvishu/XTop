@@ -5,6 +5,7 @@
 //  Created by harsh vishwakarma on 22/05/26.
 //
 
+import AppKit
 import SwiftUI
 
 
@@ -30,8 +31,11 @@ struct XTopApp: App {
         }
 
         Window("Simulator Inspector", id: "simulator-inspector") {
-            SimulatorInspectorRootView()
+            SimulatorInspectorRootView(gridConfigStore: appState.gridOverlayConfigStore)
                 .xtopEnvironment(appState)
+                .onAppear {
+                    NSApp.activate(ignoringOtherApps: true)
+                }
         }
         .windowResizability(.contentMinSize)
         .defaultLaunchBehavior(.suppressed)

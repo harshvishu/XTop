@@ -4,23 +4,29 @@ import SwiftUI
 struct SimulatorInspectorRootView: View {
     @Environment(SimulatorInspectorViewModel.self) private var viewModel
     @Environment(CameraInjectionViewModel.self) private var cameraViewModel
+    @Environment(GridOverlayController.self) private var gridOverlay
+    let gridConfigStore: GridOverlayConfigStore
     @AppStorage("SimulatorInspector.cameraInjectionEnabled") private var cameraInjectionEnabled = false
     @State private var selectedTab: InspectorTab = .userDefaults
 
     var body: some View {
         Group {
             if viewModel.bookmarkStore.hasAccess {
-                NavigationSplitView {
-                    SimulatorListSidebar()
-                        .navigationSplitViewColumnWidth(min: 220, ideal: 240)
-                } content: {
-                    InstalledAppListView()
-                        .navigationSplitViewColumnWidth(min: 240, ideal: 280)
-                } detail: {
-                    detail
-                }
-                .toolbar {
-                    inspectorToolbar
+                if viewModel.simulators.isEmpty && !viewModel.isRefreshingSimulators {
+                    SimulatorInspectorEmptyStateView()
+                } else {
+                    NavigationSplitView {
+                        SimulatorListSidebar()
+                            .navigationSplitViewColumnWidth(min: 220, ideal: 240)
+                    } content: {
+                        InstalledAppListView()
+                            .navigationSplitViewColumnWidth(min: 240, ideal: 280)
+                    } detail: {
+                        detail
+                    }
+                    .toolbar {
+                        inspectorToolbar
+                    }
                 }
             } else {
                 AccessOnboardingView()
@@ -32,7 +38,23 @@ struct SimulatorInspectorRootView: View {
         }
         .onDisappear {
             viewModel.stopPeriodicRefresh()
+            gridOverlay.deactivateAll()
         }
+        .onChange(of: viewModel.selectedSimulatorID) { oldValue, newValue in
+            applyOverlayForSelectionChange(previousUDID: oldValue, newSelection: newValue)
+        }
+    }
+
+    private func applyOverlayForSelectionChange(previousUDID: String?, newSelection: String?) {
+        if let previousUDID, previousUDID != newSelection {
+            gridOverlay.deactivate(udid: previousUDID)
+        }
+        guard let newSelection,
+              let device = viewModel.simulators.first(where: { $0.id == newSelection })
+        else { return }
+        let config = gridConfigStore.config(forUDID: newSelection)
+        guard config.isEnabled else { return }
+        gridOverlay.activate(for: SimulatorIdentity(device: device), config: config)
     }
 
     @ViewBuilder
@@ -59,6 +81,8 @@ struct SimulatorInspectorRootView: View {
                 CameraTabView(viewModel: cameraViewModel)
             case .keychain:
                 KeychainTabView()
+            case .grid:
+                GridTabView(store: gridConfigStore)
             }
         }
     }
@@ -75,16 +99,23 @@ struct SimulatorInspectorRootView: View {
     @ToolbarContentBuilder
     private var inspectorToolbar: some ToolbarContent {
         ToolbarItemGroup {
-            Toggle(isOn: $cameraInjectionEnabled) {
-                Label("Camera Injection", systemImage: "camera.viewfinder")
-            }
-            .toggleStyle(.button)
-            .help("Enable the Camera tab to stream Mac-side frames into iOS simulator apps (experimental).")
+//            Toggle(isOn: $cameraInjectionEnabled) {
+//                Label("Camera Injection", systemImage: "camera.viewfinder")
+//            }
+//            .toggleStyle(.button)
+//            .help("Enable the Camera tab to stream Mac-side frames into iOS simulator apps (experimental).")
 
             Button {
                 Task { await viewModel.relaunchSelectedApp() }
             } label: {
-                Label("Relaunch App", systemImage: "airplane.departure")
+                Label {
+                    Text("Relaunch App")
+                } icon: {
+                    Image("rocket")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 16, height: 16)
+                }
             }
             .disabled(viewModel.selectedBundleIdentifier == nil)
         }
@@ -96,6 +127,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
     case appGroups
     case camera
     case keychain
+    case grid
 
     var id: String { rawValue }
     var title: String {
@@ -104,6 +136,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .appGroups: return "App Groups"
         case .camera: return "Camera"
         case .keychain: return "Keychain"
+        case .grid: return "Grid"
         }
     }
 }

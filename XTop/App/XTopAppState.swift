@@ -9,6 +9,9 @@ struct XTopAppState {
     let viewModel: MacbarViewModel
     let simulatorInspector: SimulatorInspectorViewModel
     let cameraInjection: CameraInjectionViewModel
+    let gridOverlayController: GridOverlayController
+    let gridOverlayConfigStore: GridOverlayConfigStore
+    let axPermissionMonitor: AXPermissionMonitor
 
     init() {
         let services = XTopAppServices()
@@ -45,6 +48,9 @@ struct XTopAppState {
         self.cameraInjection = CameraInjectionViewModel(
             coordinator: services.cameraInjectionCoordinator
         )
+        self.gridOverlayController = GridOverlayController()
+        self.gridOverlayConfigStore = GridOverlayConfigStore()
+        self.axPermissionMonitor = AXPermissionMonitor()
     }
 }
 
@@ -111,5 +117,7 @@ extension View {
             .environment(state.viewModel)
             .environment(state.simulatorInspector)
             .environment(state.cameraInjection)
+            .environment(state.gridOverlayController)
+            .environment(state.axPermissionMonitor)
     }
 }
