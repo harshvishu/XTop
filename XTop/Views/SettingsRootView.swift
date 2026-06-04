@@ -221,7 +221,7 @@ private struct DeveloperToolSettingsView: View {
                 )
                 
                 Text(
-                    "Adds a Camera tab that streams Mac-side frames into iOS simulator apps via a DYLD shim. Frames stay on 127.0.0.1 and are gated by a per-launch random token. Requires restarting the inspector window after toggling."
+                    "Adds a Camera tab in the Simulator Inspector that streams Mac-side frames into iOS simulator apps via a DYLD shim. Experimental: most production apps with closed-source camera SDKs will not render the stream. Requires restarting the inspector window after toggling."
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)

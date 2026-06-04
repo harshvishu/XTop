@@ -15,6 +15,7 @@
 #import <CoreVideo/CoreVideo.h>
 #import <ImageIO/ImageIO.h>
 #import <CoreGraphics/CoreGraphics.h>
+#import <QuartzCore/QuartzCore.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
 #import <os/log.h>
@@ -38,6 +39,10 @@ static const size_t kXTCMHeaderSize = 8;
 static const size_t kXTCMTokenSize = 32;
 static const size_t kXTCMMaxPayload = 8 * 1024 * 1024;
 
+// Associated-object key used to attach an overlay CALayer to each tracked
+// AVCaptureVideoPreviewLayer. Its address is the unique key.
+static char kXTCSOverlayKey;
+
 // MARK: - State
 
 @interface XTopCameraShim : NSObject
@@ -47,7 +52,9 @@ static const size_t kXTCMMaxPayload = 8 * 1024 * 1024;
 @property (nonatomic, strong) nw_connection_t connection;
 @property (nonatomic, strong) NSMutableArray<AVCaptureSession *> *trackedSessions;
 @property (nonatomic, strong) NSMutableArray<AVCaptureVideoDataOutput *> *videoOutputs;
+@property (nonatomic, strong) NSHashTable<CALayer *> *previewLayers;
 @property (nonatomic, strong) NSMutableData *receiveBuffer;
+@property (nonatomic, assign) uint64_t framesReceived;
 + (instancetype)shared;
 - (void)deliverJPEG:(NSData *)jpeg;
 @end
@@ -60,6 +67,7 @@ static const size_t kXTCMMaxPayload = 8 * 1024 * 1024;
         instance = [[XTopCameraShim alloc] init];
         instance.trackedSessions = [NSMutableArray array];
         instance.videoOutputs = [NSMutableArray array];
+        instance.previewLayers = [NSHashTable weakObjectsHashTable];
         instance.receiveBuffer = [NSMutableData data];
     });
     return instance;
@@ -67,9 +75,9 @@ static const size_t kXTCMMaxPayload = 8 * 1024 * 1024;
 
 - (void)deliverJPEG:(NSData *)jpeg {
     if (jpeg.length < 4) { return; }
-    if (self.videoOutputs.count == 0) {
-        os_log_debug(XTCSLog(), "frame %lu bytes but no tracked outputs", (unsigned long)jpeg.length);
-        return;
+    self.framesReceived += 1;
+    if (self.framesReceived == 1) {
+        os_log(XTCSLog(), "first frame received: %lu bytes", (unsigned long)jpeg.length);
     }
 
     // 1) JPEG -> CGImage via ImageIO.
@@ -78,6 +86,58 @@ static const size_t kXTCMMaxPayload = 8 * 1024 * 1024;
     CGImageRef image = CGImageSourceCreateImageAtIndex(src, 0, NULL);
     CFRelease(src);
     if (!image) { return; }
+
+    // Snapshot preview layers; for each, ensure a child overlay CALayer
+    // exists (AVCaptureVideoPreviewLayer's own .contents is ignored by its
+    // private internal renderer, so we cannot just set it directly), then
+    // push the CGImage into the overlay's contents on the main thread.
+    NSArray<CALayer *> *previewSnapshot;
+    @synchronized (self.previewLayers) {
+        previewSnapshot = self.previewLayers.allObjects;
+    }
+    if (previewSnapshot.count > 0) {
+        CGImageRef retained = CGImageRetain(image);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            for (CALayer *parent in previewSnapshot) {
+                @try {
+                    CALayer *overlay = objc_getAssociatedObject(parent, &kXTCSOverlayKey);
+                    if (!overlay) {
+                        overlay = [CALayer layer];
+                        overlay.contentsGravity = kCAGravityResizeAspectFill;
+                        overlay.masksToBounds = YES;
+                        overlay.zPosition = CGFLOAT_MAX;
+                        objc_setAssociatedObject(parent, &kXTCSOverlayKey, overlay,
+                                                 OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+                        [parent addSublayer:overlay];
+                    }
+                    [CATransaction begin];
+                    [CATransaction setDisableActions:YES];
+                    overlay.frame = parent.bounds;
+                    overlay.contents = (__bridge id)retained;
+                    [CATransaction commit];
+                } @catch (NSException *e) {
+                    os_log_error(XTCSLog(), "preview overlay push threw: %{public}@", e.reason);
+                }
+            }
+            CGImageRelease(retained);
+        });
+    }
+
+    if (self.videoOutputs.count == 0 && previewSnapshot.count == 0) {
+        // Sampled log to avoid spam; once per ~30 frames is plenty.
+        if (self.framesReceived % 30 == 1) {
+            os_log_info(XTCSLog(),
+                        "frame %llu received but no tracked outputs and no preview layers",
+                        (unsigned long long)self.framesReceived);
+        }
+        CGImageRelease(image);
+        return;
+    }
+
+    if (self.videoOutputs.count == 0) {
+        CGImageRelease(image);
+        return;
+    }
 
     const size_t width = CGImageGetWidth(image);
     const size_t height = CGImageGetHeight(image);
@@ -197,12 +257,107 @@ static BOOL XTCSSwizzleInstanceMethod(Class cls, SEL original, SEL replacement) 
     return YES;
 }
 
+// MARK: - Fake AVCaptureDevice / AVCaptureDeviceInput
+//
+// AVCaptureDevice has no public initializer. We subclass it and allocate via
+// class_createInstance(_, 0) to bypass +alloc validation. We then override
+// every property a typical camera consumer might query so the host app does
+// not crash when it inspects the placeholder.
+//
+// Caveats:
+// - AVCaptureDeviceFormat has no public initializer either, so -formats and
+//   -activeFormat return empty array / nil. Apps that gate on a specific
+//   format will reject the device. There is no clean way around this without
+//   reaching into private AVFoundation symbols.
+// - We do not implement KVO observation lists, so apps that addObserver on
+//   our device for keys like "adjustingFocus" will see no notifications.
+// - lockForConfiguration:/unlockForConfiguration are no-ops that always
+//   report success.
+
+static NSString * const XTCSFakeDeviceUniqueID = @"com.vishwakarma.XTop.fakeCamera.back";
+
+@interface XTCSFakeCaptureDevice : AVCaptureDevice
+@end
+
+@implementation XTCSFakeCaptureDevice {
+    AVMediaType _mediaType;
+}
+
++ (instancetype)sharedVideoDevice {
+    static XTCSFakeCaptureDevice *device;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        device = (XTCSFakeCaptureDevice *)class_createInstance([XTCSFakeCaptureDevice class], 0);
+        device->_mediaType = AVMediaTypeVideo;
+    });
+    return device;
+}
+
+- (NSString *)uniqueID { return XTCSFakeDeviceUniqueID; }
+- (NSString *)modelID { return @"XTopFakeCamera1,1"; }
+- (NSString *)localizedName { return @"XTop Virtual Camera"; }
+- (NSString *)manufacturer { return @"XTop"; }
+- (AVCaptureDevicePosition)position { return AVCaptureDevicePositionBack; }
+- (AVCaptureDeviceType)deviceType { return AVCaptureDeviceTypeBuiltInWideAngleCamera; }
+- (BOOL)hasMediaType:(AVMediaType)mediaType { return [mediaType isEqualToString:AVMediaTypeVideo]; }
+- (BOOL)supportsAVCaptureSessionPreset:(AVCaptureSessionPreset)preset { return YES; }
+- (NSArray *)formats { return @[]; }
+- (id)activeFormat { return nil; }
+- (BOOL)isConnected { return YES; }
+- (BOOL)isSuspended { return NO; }
+- (BOOL)lockForConfiguration:(NSError **)outError {
+    if (outError) *outError = nil;
+    return YES;
+}
+- (void)unlockForConfiguration { }
+- (BOOL)hasTorch { return NO; }
+- (BOOL)hasFlash { return NO; }
+- (BOOL)isFocusModeSupported:(AVCaptureFocusMode)mode { return NO; }
+- (BOOL)isExposureModeSupported:(AVCaptureExposureMode)mode { return NO; }
+- (BOOL)isWhiteBalanceModeSupported:(AVCaptureWhiteBalanceMode)mode { return NO; }
+
+// AVCaptureDevice overrides NSObject -class to return the class via runtime
+// inspection; ensure our subclass advertises itself correctly to isKindOfClass: checks.
+- (Class)class { return [XTCSFakeCaptureDevice class]; }
+@end
+
+// We mark sessions/inputs that interact with our fake device so addInput:
+// can swallow the real call without throwing.
+static char kXTCSFakeMarkerKey;
+
+static BOOL XTCSIsFakeMarked(id obj) {
+    return objc_getAssociatedObject(obj, &kXTCSFakeMarkerKey) != nil;
+}
+static void XTCSMarkFake(id obj) {
+    objc_setAssociatedObject(obj, &kXTCSFakeMarkerKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
+@interface XTCSFakeCaptureDeviceInput : AVCaptureDeviceInput
+@end
+
+@implementation XTCSFakeCaptureDeviceInput {
+    AVCaptureDevice *_fakeDevice;
+}
+
++ (instancetype)inputWithDevice:(AVCaptureDevice *)device {
+    XTCSFakeCaptureDeviceInput *input = (XTCSFakeCaptureDeviceInput *)class_createInstance([XTCSFakeCaptureDeviceInput class], 0);
+    input->_fakeDevice = device;
+    XTCSMarkFake(input);
+    return input;
+}
+
+- (AVCaptureDevice *)device { return _fakeDevice; }
+- (NSArray *)ports { return @[]; }
+- (Class)class { return [XTCSFakeCaptureDeviceInput class]; }
+@end
+
 // MARK: - AVCaptureDevice swizzles
 
 @interface AVCaptureDevice (XTopCameraShim)
 @end
 @implementation AVCaptureDevice (XTopCameraShim)
 + (AVAuthorizationStatus)xtcs_authorizationStatusForMediaType:(AVMediaType)mediaType {
+    os_log(XTCSLog(), "hook: +authorizationStatusForMediaType:%{public}@", mediaType);
     if ([mediaType isEqualToString:AVMediaTypeVideo]) {
         return AVAuthorizationStatusAuthorized;
     }
@@ -211,6 +366,7 @@ static BOOL XTCSSwizzleInstanceMethod(Class cls, SEL original, SEL replacement) 
 
 + (void)xtcs_requestAccessForMediaType:(AVMediaType)mediaType
                      completionHandler:(void (^)(BOOL granted))handler {
+    os_log(XTCSLog(), "hook: +requestAccessForMediaType:%{public}@", mediaType);
     if ([mediaType isEqualToString:AVMediaTypeVideo]) {
         // Resemble OS behavior: small async hop, then yes.
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)),
@@ -221,6 +377,69 @@ static BOOL XTCSSwizzleInstanceMethod(Class cls, SEL original, SEL replacement) 
     }
     [self xtcs_requestAccessForMediaType:mediaType completionHandler:handler];
 }
+
++ (AVCaptureDevice *)xtcs_defaultDeviceWithMediaType:(AVMediaType)mediaType {
+    AVCaptureDevice *device = [self xtcs_defaultDeviceWithMediaType:mediaType];
+    if (!device && [mediaType isEqualToString:AVMediaTypeVideo]) {
+        device = [XTCSFakeCaptureDevice sharedVideoDevice];
+        os_log(XTCSLog(), "hook: +defaultDeviceWithMediaType:video -> FAKE %p", device);
+    } else {
+        os_log(XTCSLog(), "hook: +defaultDeviceWithMediaType:%{public}@ -> %p", mediaType, device);
+    }
+    return device;
+}
+
++ (NSArray<AVCaptureDevice *> *)xtcs_devicesWithMediaType:(AVMediaType)mediaType {
+    NSArray *devices = [self xtcs_devicesWithMediaType:mediaType];
+    if ((!devices || devices.count == 0) && [mediaType isEqualToString:AVMediaTypeVideo]) {
+        devices = @[[XTCSFakeCaptureDevice sharedVideoDevice]];
+        os_log(XTCSLog(), "hook: +devicesWithMediaType:video -> FAKE count=1");
+    } else {
+        os_log(XTCSLog(), "hook: +devicesWithMediaType:%{public}@ -> count=%lu",
+               mediaType, (unsigned long)devices.count);
+    }
+    return devices;
+}
+
++ (AVCaptureDevice *)xtcs_deviceWithUniqueID:(NSString *)uniqueID {
+    if ([uniqueID isEqualToString:XTCSFakeDeviceUniqueID]) {
+        return [XTCSFakeCaptureDevice sharedVideoDevice];
+    }
+    AVCaptureDevice *device = [self xtcs_deviceWithUniqueID:uniqueID];
+    os_log(XTCSLog(), "hook: +deviceWithUniqueID:%{public}@ -> %p", uniqueID, device);
+    return device;
+}
+@end
+
+// MARK: - AVCaptureDeviceDiscoverySession diagnostic hook
+
+@interface AVCaptureDeviceDiscoverySession (XTopCameraShim)
+@end
+@implementation AVCaptureDeviceDiscoverySession (XTopCameraShim)
++ (instancetype)xtcs_discoverySessionWithDeviceTypes:(NSArray<AVCaptureDeviceType> *)deviceTypes
+                                           mediaType:(AVMediaType)mediaType
+                                            position:(AVCaptureDevicePosition)position {
+    AVCaptureDeviceDiscoverySession *s = [self xtcs_discoverySessionWithDeviceTypes:deviceTypes
+                                                                          mediaType:mediaType
+                                                                           position:position];
+    os_log(XTCSLog(), "hook: +discoverySession types=%{public}@ media=%{public}@ pos=%ld -> devices.count=%lu",
+           deviceTypes, mediaType, (long)position, (unsigned long)s.devices.count);
+    return s;
+}
+@end
+
+// MARK: - AVCaptureDeviceInput diagnostic hook
+
+@interface AVCaptureDeviceInput (XTopCameraShim)
+@end
+@implementation AVCaptureDeviceInput (XTopCameraShim)
++ (instancetype)xtcs_deviceInputWithDevice:(AVCaptureDevice *)device
+                                     error:(NSError * _Nullable __autoreleasing *)outError {
+    AVCaptureDeviceInput *input = [self xtcs_deviceInputWithDevice:device error:outError];
+    os_log(XTCSLog(), "hook: +deviceInputWithDevice:%p -> input=%p err=%{public}@",
+           device, input, (outError && *outError) ? *outError : nil);
+    return input;
+}
 @end
 
 // MARK: - AVCaptureSession swizzles
@@ -229,6 +448,7 @@ static BOOL XTCSSwizzleInstanceMethod(Class cls, SEL original, SEL replacement) 
 @end
 @implementation AVCaptureSession (XTopCameraShim)
 - (void)xtcs_startRunning {
+    os_log(XTCSLog(), "hook: -[AVCaptureSession startRunning] session=%p", self);
     @try {
         XTopCameraShim *shim = [XTopCameraShim shared];
         if (shim.active && ![shim.trackedSessions containsObject:self]) {
@@ -241,6 +461,7 @@ static BOOL XTCSSwizzleInstanceMethod(Class cls, SEL original, SEL replacement) 
 }
 
 - (void)xtcs_stopRunning {
+    os_log(XTCSLog(), "hook: -[AVCaptureSession stopRunning] session=%p", self);
     @try {
         XTopCameraShim *shim = [XTopCameraShim shared];
         [shim.trackedSessions removeObject:self];
@@ -251,6 +472,8 @@ static BOOL XTCSSwizzleInstanceMethod(Class cls, SEL original, SEL replacement) 
 }
 
 - (void)xtcs_addOutput:(AVCaptureOutput *)output {
+    os_log(XTCSLog(), "hook: -[AVCaptureSession addOutput:] session=%p output=%{public}@",
+           self, NSStringFromClass([output class]));
     @try {
         XTopCameraShim *shim = [XTopCameraShim shared];
         if (shim.active && [output isKindOfClass:[AVCaptureVideoDataOutput class]]) {
@@ -260,6 +483,53 @@ static BOOL XTCSSwizzleInstanceMethod(Class cls, SEL original, SEL replacement) 
         os_log_error(XTCSLog(), "addOutput swizzle threw: %{public}@", e.reason);
     }
     [self xtcs_addOutput:output];
+}
+@end
+
+// MARK: - AVCaptureVideoPreviewLayer swizzles
+//
+// Most camera UIs render the live preview through AVCaptureVideoPreviewLayer.
+// In the iOS simulator there is no real AVCaptureDevice, so the layer has
+// nothing to draw and stays grey. We hook setSession: (covers both
+// -initWithSession: and -layerWithSession: which go through the setter) to
+// track every preview layer instance; on each frame the shim sets the
+// layer.contents to the inbound CGImage, which makes the layer render as
+// if it were receiving real frames.
+
+@interface AVCaptureVideoPreviewLayer (XTopCameraShim)
+@end
+@implementation AVCaptureVideoPreviewLayer (XTopCameraShim)
+- (void)xtcs_setSession:(AVCaptureSession *)session {
+    os_log(XTCSLog(), "hook: -[AVCaptureVideoPreviewLayer setSession:] layer=%p session=%p",
+           self, session);
+    @try {
+        XTopCameraShim *shim = [XTopCameraShim shared];
+        if (shim.active) {
+            @synchronized (shim.previewLayers) {
+                [shim.previewLayers addObject:self];
+            }
+        }
+    } @catch (NSException *e) {
+        os_log_error(XTCSLog(), "preview setSession swizzle threw: %{public}@", e.reason);
+    }
+    [self xtcs_setSession:session];
+}
+
+- (instancetype)xtcs_initWithSession:(AVCaptureSession *)session {
+    AVCaptureVideoPreviewLayer *layer = [self xtcs_initWithSession:session];
+    os_log(XTCSLog(), "hook: -[AVCaptureVideoPreviewLayer initWithSession:] layer=%p session=%p",
+           layer, session);
+    @try {
+        XTopCameraShim *shim = [XTopCameraShim shared];
+        if (layer && shim.active) {
+            @synchronized (shim.previewLayers) {
+                [shim.previewLayers addObject:layer];
+            }
+        }
+    } @catch (NSException *e) {
+        os_log_error(XTCSLog(), "preview initWithSession swizzle threw: %{public}@", e.reason);
+    }
+    return layer;
 }
 @end
 
@@ -365,6 +635,25 @@ static void XTCSInstallSwizzles(void) {
     XTCSSwizzleClassMethod(deviceCls,
         @selector(requestAccessForMediaType:completionHandler:),
         @selector(xtcs_requestAccessForMediaType:completionHandler:));
+    XTCSSwizzleClassMethod(deviceCls,
+        @selector(defaultDeviceWithMediaType:),
+        @selector(xtcs_defaultDeviceWithMediaType:));
+    XTCSSwizzleClassMethod(deviceCls,
+        @selector(devicesWithMediaType:),
+        @selector(xtcs_devicesWithMediaType:));
+    XTCSSwizzleClassMethod(deviceCls,
+        @selector(deviceWithUniqueID:),
+        @selector(xtcs_deviceWithUniqueID:));
+
+    Class discoveryCls = [AVCaptureDeviceDiscoverySession class];
+    XTCSSwizzleClassMethod(discoveryCls,
+        @selector(discoverySessionWithDeviceTypes:mediaType:position:),
+        @selector(xtcs_discoverySessionWithDeviceTypes:mediaType:position:));
+
+    Class inputCls = [AVCaptureDeviceInput class];
+    XTCSSwizzleClassMethod(inputCls,
+        @selector(deviceInputWithDevice:error:),
+        @selector(xtcs_deviceInputWithDevice:error:));
 
     Class sessionCls = [AVCaptureSession class];
     XTCSSwizzleInstanceMethod(sessionCls,
@@ -373,6 +662,12 @@ static void XTCSInstallSwizzles(void) {
         @selector(stopRunning), @selector(xtcs_stopRunning));
     XTCSSwizzleInstanceMethod(sessionCls,
         @selector(addOutput:), @selector(xtcs_addOutput:));
+
+    Class previewCls = [AVCaptureVideoPreviewLayer class];
+    XTCSSwizzleInstanceMethod(previewCls,
+        @selector(setSession:), @selector(xtcs_setSession:));
+    XTCSSwizzleInstanceMethod(previewCls,
+        @selector(initWithSession:), @selector(xtcs_initWithSession:));
 }
 
 __attribute__((constructor))

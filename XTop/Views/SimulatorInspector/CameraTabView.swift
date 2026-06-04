@@ -145,6 +145,13 @@ struct CameraTabView: View {
                 Label("Copy scheme snippet", systemImage: "doc.on.doc")
             }
             .disabled(viewModel.transportState.port == nil)
+
+            Button {
+                copyLogCommand()
+            } label: {
+                Label("Copy log command", systemImage: "text.viewfinder")
+            }
+            .help("Copies a shell command that streams the shim's hook logs from the booted simulator.")
         }
     }
 
@@ -168,9 +175,14 @@ struct CameraTabView: View {
     }
 
     private var disclosure: some View {
-        Text("Frames stay on this Mac: the shim connects to 127.0.0.1, authenticates with a per-launch random token, and only one client is accepted per session.")
-            .font(DesignSystem.Typography.rowSecondary)
-            .foregroundStyle(DesignSystem.Colors.tertiaryText)
+        VStack(alignment: .leading, spacing: DesignSystem.Spacing.xs) {
+            Text("Frames stay on this Mac: the shim connects to 127.0.0.1, authenticates with a per-launch random token, and only one client is accepted per session.")
+                .font(DesignSystem.Typography.rowSecondary)
+                .foregroundStyle(DesignSystem.Colors.tertiaryText)
+            Text("If the simulator shows a grey screen after Connected, the app likely uses no AVCaptureDevice at all (a real iOS-only path) or holds the preview in a custom Metal/SceneKit view we cannot intercept. AVCaptureVideoPreviewLayer and AVCaptureVideoDataOutput-based UIs are supported.")
+                .font(DesignSystem.Typography.rowSecondary)
+                .foregroundStyle(DesignSystem.Colors.tertiaryText)
+        }
     }
 
     // MARK: - Helpers
@@ -210,6 +222,12 @@ struct CameraTabView: View {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(snippet, forType: .string)
         }
+    }
+
+    private func copyLogCommand() {
+        let command = #"xcrun simctl spawn booted log stream --predicate 'subsystem == "com.vishwakarma.XTop.shim"' --level debug"#
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(command, forType: .string)
     }
 
     private func statusLine(_ label: String, value: String) -> some View {
