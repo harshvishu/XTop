@@ -188,7 +188,7 @@ final class SimulatorInspectorViewModel {
             try await defaultsStore.update(key: key, to: value, at: url)
             await refreshEntries()
             pendingRelaunchSuggestion = true
-            lastInfo = "Updated \(key). Relaunch the app for the change to take effect."
+            lastInfo = nil
         } catch {
             lastError = error.localizedDescription
         }
@@ -202,7 +202,7 @@ final class SimulatorInspectorViewModel {
             try await defaultsStore.add(key: key, value: value, at: url)
             await refreshEntries()
             pendingRelaunchSuggestion = true
-            lastInfo = "Added \(key)."
+            lastInfo = nil
         } catch {
             lastError = error.localizedDescription
         }
@@ -216,7 +216,7 @@ final class SimulatorInspectorViewModel {
             try await defaultsStore.delete(key: key, at: url)
             await refreshEntries()
             pendingRelaunchSuggestion = true
-            lastInfo = "Deleted \(key)."
+            lastInfo = nil
         } catch {
             lastError = error.localizedDescription
         }

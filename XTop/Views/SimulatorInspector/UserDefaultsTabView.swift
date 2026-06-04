@@ -100,24 +100,25 @@ struct UserDefaultsTabView: View {
 
                     TableColumn("") { entry in
                         HStack(spacing: DesignSystem.Spacing.xs) {
-                            Button {
+                            Button("Edit", systemImage: "pencil") {
                                 editingEntry = entry
-                            } label: {
-                                Image(systemName: "pencil")
                             }
-                            .buttonStyle(.borderless)
+                            .labelStyle(.iconOnly)
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
                             .disabled(!entry.isScalar)
                             .help(entry.isScalar ? "Edit value" : "Editing arrays/dictionaries is not supported in v1.")
 
-                            Button(role: .destructive) {
+                            Button("Delete", systemImage: "trash", role: .destructive) {
                                 entryToDelete = entry
-                            } label: {
-                                Image(systemName: "trash")
                             }
-                            .buttonStyle(.borderless)
+                            .labelStyle(.iconOnly)
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .help("Delete entry")
                         }
                     }
-                    .width(min: 70, ideal: 80, max: 100)
+                    .width(min: 90, ideal: 100, max: 120)
                 }
             }
         }

@@ -117,14 +117,8 @@ private struct InspectorBanners: View {
                     onDismiss: nil
                 )
             }
-            if viewModel.pendingRelaunchSuggestion, let info = viewModel.lastInfo {
-                bannerRow(
-                    icon: "info.circle.fill",
-                    text: info,
-                    foreground: DesignSystem.Colors.accent,
-                    background: DesignSystem.Colors.accent.opacity(0.08),
-                    onDismiss: viewModel.dismissInfo
-                )
+            if viewModel.pendingRelaunchSuggestion {
+                RelaunchPill()
             } else if let info = viewModel.lastInfo {
                 bannerRow(
                     icon: "checkmark.circle.fill",
@@ -168,6 +162,57 @@ private struct InspectorBanners: View {
         .padding(.horizontal, DesignSystem.Spacing.sm)
         .background(background)
         .clipShape(.rect(cornerRadius: DesignSystem.Radius.row))
+    }
+}
+
+private struct RelaunchPill: View {
+    @Environment(SimulatorInspectorViewModel.self) private var viewModel
+    @State private var isRelaunching = false
+
+    var body: some View {
+        HStack(spacing: DesignSystem.Spacing.sm) {
+            Image(systemName: "arrow.triangle.2.circlepath")
+                .foregroundStyle(DesignSystem.Colors.accent)
+            Text("Edits queued — relaunch the app to apply.")
+                .font(DesignSystem.Typography.rowSecondary)
+                .foregroundStyle(DesignSystem.Colors.primaryText)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button {
+                relaunch()
+            } label: {
+                if isRelaunching {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Text("Relaunch")
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .disabled(isRelaunching)
+
+            Button {
+                viewModel.dismissRelaunchSuggestion()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.caption)
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(DesignSystem.Colors.secondaryText)
+        }
+        .padding(.vertical, DesignSystem.Spacing.xs)
+        .padding(.horizontal, DesignSystem.Spacing.sm)
+        .background(DesignSystem.Colors.accent.opacity(0.08))
+        .clipShape(.rect(cornerRadius: DesignSystem.Radius.row))
+    }
+
+    private func relaunch() {
+        guard !isRelaunching else { return }
+        isRelaunching = true
+        Task {
+            await viewModel.relaunchSelectedApp()
+            isRelaunching = false
+        }
     }
 }
 
