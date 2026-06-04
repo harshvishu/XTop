@@ -20,4 +20,16 @@ struct AppLifecycleControllerTests {
         #expect(urls[2].lastPathComponent == "keychain-2-debug.db-wal")
         #expect(urls[0].path(percentEncoded: false).contains("/CoreSimulator/Devices/ABC-123/"))
     }
+
+    @Test func parsePIDExtractsTrailingIntegerFromLaunchStdout() throws {
+        #expect(AppLifecycleController.parsePID(fromLaunchStdout: "com.example.app: 12345\n") == 12345)
+        #expect(AppLifecycleController.parsePID(fromLaunchStdout: "com.example.app: 99\n") == 99)
+        #expect(AppLifecycleController.parsePID(fromLaunchStdout: "  com.example.app: 7  ") == 7)
+    }
+
+    @Test func parsePIDReturnsNilWhenNoIntegerSuffix() throws {
+        #expect(AppLifecycleController.parsePID(fromLaunchStdout: "") == nil)
+        #expect(AppLifecycleController.parsePID(fromLaunchStdout: "com.example.app: oops") == nil)
+        #expect(AppLifecycleController.parsePID(fromLaunchStdout: "no-colon-no-pid") == nil)
+    }
 }

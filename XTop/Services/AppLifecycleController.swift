@@ -38,13 +38,51 @@ actor AppLifecycleController {
     }
 
     func launch(bundleIdentifier: String, on udid: String) async throws {
-        let result = await simctl.launch(udid: udid, bundleIdentifier: bundleIdentifier)
+        _ = try await launch(
+            bundleIdentifier: bundleIdentifier,
+            on: udid,
+            childEnvironment: [:]
+        )
+    }
+
+    /// Launches a simulator app, forwarding `childEnvironment` as
+    /// `SIMCTL_CHILD_*` env vars so they reach the launched app process.
+    ///
+    /// `DYLD_INSERT_LIBRARIES` is the primary use case — it must be passed via
+    /// `SIMCTL_CHILD_DYLD_INSERT_LIBRARIES=…` to take effect inside the
+    /// simulator process.
+    ///
+    /// Returns the PID parsed from `simctl launch` stdout (format
+    /// `<bundle-id>: <pid>`) when available, or `nil` if it could not be
+    /// parsed.
+    @discardableResult
+    func launch(
+        bundleIdentifier: String,
+        on udid: String,
+        childEnvironment: [String: String]
+    ) async throws -> Int32? {
+        let result = await simctl.launch(
+            udid: udid,
+            bundleIdentifier: bundleIdentifier,
+            childEnvironment: childEnvironment
+        )
         guard result.exitStatus == 0 else {
             throw LifecycleError.launchFailed(
                 stderr: result.stderr,
                 exitStatus: result.exitStatus
             )
         }
+        return Self.parsePID(fromLaunchStdout: result.stdout)
+    }
+
+    /// Parses the PID emitted by `simctl launch`. Output looks like
+    /// `com.example.app: 12345\n`. Returns `nil` if no integer suffix is
+    /// present (e.g. older Xcode versions or unexpected output).
+    static func parsePID(fromLaunchStdout stdout: String) -> Int32? {
+        let trimmed = stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let lastSpace = trimmed.lastIndex(of: " ") else { return nil }
+        let suffix = trimmed[trimmed.index(after: lastSpace)...]
+        return Int32(suffix)
     }
 
     func relaunch(bundleIdentifier: String, on udid: String) async throws {

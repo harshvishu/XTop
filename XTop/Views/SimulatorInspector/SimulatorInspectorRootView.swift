@@ -3,6 +3,7 @@ import SwiftUI
 
 struct SimulatorInspectorRootView: View {
     @Environment(SimulatorInspectorViewModel.self) private var viewModel
+    @Environment(CameraInjectionViewModel.self) private var cameraViewModel
     @State private var selectedTab: InspectorTab = .userDefaults
 
     var body: some View {
@@ -38,7 +39,7 @@ struct SimulatorInspectorRootView: View {
         VStack(spacing: 0) {
             InspectorBanners()
             Picker("Inspector", selection: $selectedTab) {
-                ForEach(InspectorTab.allCases) { tab in
+                ForEach(visibleTabs) { tab in
                     Text(tab.title).tag(tab)
                 }
             }
@@ -53,8 +54,19 @@ struct SimulatorInspectorRootView: View {
                 UserDefaultsTabView()
             case .appGroups:
                 AppGroupsTabView()
+            case .camera:
+                CameraTabView(viewModel: cameraViewModel)
             case .keychain:
                 KeychainTabView()
+            }
+        }
+    }
+
+    private var visibleTabs: [InspectorTab] {
+        InspectorTab.allCases.filter { tab in
+            switch tab {
+            case .camera: return SimulatorInspectorFeatureFlags.cameraInjectionEnabled
+            default: return true
             }
         }
     }
@@ -75,6 +87,7 @@ struct SimulatorInspectorRootView: View {
 enum InspectorTab: String, CaseIterable, Identifiable {
     case userDefaults
     case appGroups
+    case camera
     case keychain
 
     var id: String { rawValue }
@@ -82,6 +95,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         switch self {
         case .userDefaults: return "UserDefaults"
         case .appGroups: return "App Groups"
+        case .camera: return "Camera"
         case .keychain: return "Keychain"
         }
     }

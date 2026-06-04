@@ -8,6 +8,7 @@ struct XTopAppState {
     let diagnostics: DeveloperDiagnosticsStore
     let viewModel: MacbarViewModel
     let simulatorInspector: SimulatorInspectorViewModel
+    let cameraInjection: CameraInjectionViewModel
 
     init() {
         let services = XTopAppServices()
@@ -41,6 +42,9 @@ struct XTopAppState {
             keychainClearer: services.simulatorKeychainClearer,
             lifecycle: services.appLifecycleController
         )
+        self.cameraInjection = CameraInjectionViewModel(
+            coordinator: services.cameraInjectionCoordinator
+        )
     }
 }
 
@@ -61,6 +65,7 @@ struct XTopAppServices {
     let simulatorUserDefaultsStore: UserDefaultsStore
     let simulatorKeychainClearer: KeychainClearer
     let appLifecycleController: AppLifecycleController
+    let cameraInjectionCoordinator: CameraInjectionCoordinator
 
     init(
         runner: CommandRunner = CommandRunner(),
@@ -90,7 +95,9 @@ struct XTopAppServices {
         self.installedAppCatalog = InstalledAppCatalog(simctl: simctl)
         self.simulatorUserDefaultsStore = UserDefaultsStore()
         self.simulatorKeychainClearer = KeychainClearer()
-        self.appLifecycleController = AppLifecycleController(simctl: simctl)
+        let lifecycle = AppLifecycleController(simctl: simctl)
+        self.appLifecycleController = lifecycle
+        self.cameraInjectionCoordinator = CameraInjectionCoordinator(lifecycle: lifecycle)
     }
 }
 
@@ -103,5 +110,6 @@ extension View {
             .environment(state.diagnostics)
             .environment(state.viewModel)
             .environment(state.simulatorInspector)
+            .environment(state.cameraInjection)
     }
 }

@@ -141,10 +141,31 @@ actor SimctlClient {
 
     @discardableResult
     func launch(udid: String, bundleIdentifier: String) async -> CommandResult {
-        await runner.run(
+        await launch(
+            udid: udid,
+            bundleIdentifier: bundleIdentifier,
+            childEnvironment: [:]
+        )
+    }
+
+    /// Launches `bundleIdentifier` and forwards `childEnvironment` as
+    /// `SIMCTL_CHILD_*` env vars to `xcrun simctl`. Empty environment behaves
+    /// identically to the no-arg overload.
+    @discardableResult
+    func launch(
+        udid: String,
+        bundleIdentifier: String,
+        childEnvironment: [String: String]
+    ) async -> CommandResult {
+        var env = ProcessInfo.processInfo.environment
+        for (key, value) in childEnvironment {
+            env["SIMCTL_CHILD_\(key)"] = value
+        }
+        return await runner.run(
             command: "xcrun",
             arguments: ["simctl", "launch", udid, bundleIdentifier],
-            workingDirectory: NSHomeDirectory()
+            workingDirectory: NSHomeDirectory(),
+            environment: env
         )
     }
 

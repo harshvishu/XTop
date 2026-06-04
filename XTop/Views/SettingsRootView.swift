@@ -205,6 +205,7 @@ private struct DeveloperToolSettingsView: View {
     
     @Environment(MacbarPreferences.self) private var preferences
     @Environment(DeveloperDiagnosticsStore.self) private var diagnostics
+    @AppStorage("SimulatorInspector.cameraInjectionEnabled") private var cameraInjectionEnabled = false
     
     var body: some View {
         @Bindable var preferences = preferences
@@ -217,6 +218,20 @@ private struct DeveloperToolSettingsView: View {
                     "Show developer process usage",
                     isOn: $preferences.includesDeveloperProcesses
                 )
+            }
+            
+            Section("Simulator Inspector") {
+                
+                Toggle(
+                    "Enable Camera Injection (experimental)",
+                    isOn: $cameraInjectionEnabled
+                )
+                
+                Text(
+                    "Adds a Camera tab that streams Mac-side frames into iOS simulator apps via a DYLD shim. Frames stay on 127.0.0.1 and are gated by a per-launch random token. Requires restarting the inspector window after toggling."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
             
             Section("Tool Availability") {
