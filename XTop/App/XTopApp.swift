@@ -19,13 +19,9 @@ struct XTopApp: App {
             MenuBarPanelView()
                 .xtopEnvironment(appState)
         } label: {
-            Text(statusTitle(from: appState.viewModel.telemetry))
+            MenuBarStatusLabel()
+                .xtopEnvironment(appState)
         }
-
-//        MenuBarExtra("XTop", systemImage: "chart.bar.fill") {
-//            MenuBarPanelView()
-//                .xtopEnvironment(appState)
-//        }
         .menuBarExtraStyle(.window)
 
         Settings {
@@ -38,30 +34,38 @@ struct XTopApp: App {
                 .xtopEnvironment(appState)
         }
         .windowResizability(.contentMinSize)
+        .defaultLaunchBehavior(.suppressed)
+        .restorationBehavior(.disabled)
     }
-    
-    private func statusTitle(from telemetry: SystemTelemetrySnapshot) -> String {
+}
+
+private struct MenuBarStatusLabel: View {
+    @Environment(MacbarPreferences.self) private var preferences
+    @Environment(MacbarViewModel.self) private var viewModel
+
+    var body: some View {
+        Text(statusTitle)
+    }
+
+    private var statusTitle: String {
+        let telemetry = viewModel.telemetry
         let cpu = telemetry.cpuPercent.value ?? 0
         let mem = telemetry.memoryUsedPercent.value ?? 0
         let symbol: String
         switch telemetry.severity {
-            case .healthy:
-                symbol = "●"
-            case .warning:
-                symbol = "◐"
-            case .critical:
-                symbol = "◉"
-            case .unknown:
-                symbol = "○"
+        case .healthy: symbol = "●"
+        case .warning: symbol = "◐"
+        case .critical: symbol = "◉"
+        case .unknown: symbol = "○"
         }
-        
-        switch appState.preferences.menuBarSummaryMode {
-            case .cpuAndMemory:
-                return String(format: "%@ %.0f|%.0f", symbol, cpu, mem)
-            case .cpuOnly:
-                return String(format: "%@ %.0f%%", symbol, cpu)
-            case .iconOnly:
-                return symbol
+
+        switch preferences.menuBarSummaryMode {
+        case .cpuAndMemory:
+            return String(format: "%@ %.0f|%.0f", symbol, cpu, mem)
+        case .cpuOnly:
+            return String(format: "%@ %.0f%%", symbol, cpu)
+        case .iconOnly:
+            return symbol
         }
     }
 }

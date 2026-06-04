@@ -145,13 +145,6 @@ private struct SystemTelemetryCard: View {
                     TelemetryValueTile(title: "Storage", metric: viewModel.telemetry.storageUsedPercent)
                 }
 
-                Label(
-                    viewModel.telemetry.severity.rawValue.capitalized,
-                    systemImage: severitySymbol(viewModel.telemetry.severity)
-                )
-                .font(.caption)
-                .foregroundStyle(severityColor(viewModel.telemetry.severity))
-
                 if viewModel.telemetry.sampleDelayed {
                     Label("Showing prior stable sample", systemImage: "clock.badge.exclamationmark")
                         .font(.caption)
@@ -211,32 +204,6 @@ private struct SystemTelemetryCard: View {
 
     private func capability(for metric: AdvancedSensorMetric) -> AdvancedSensorCapability? {
         viewModel.sensorSettings.capabilities.first { $0.metric == metric }
-    }
-
-    private func severityColor(_ severity: SeverityLevel) -> Color {
-        switch severity {
-        case .healthy:
-            return .green
-        case .warning:
-            return .yellow
-        case .critical:
-            return .red
-        case .unknown:
-            return DashboardTheme.secondaryText
-        }
-    }
-
-    private func severitySymbol(_ severity: SeverityLevel) -> String {
-        switch severity {
-        case .healthy:
-            return "checkmark.circle.fill"
-        case .warning:
-            return "exclamationmark.circle.fill"
-        case .critical:
-            return "bolt.trianglebadge.exclamationmark.fill"
-        case .unknown:
-            return "questionmark.circle"
-        }
     }
 }
 
@@ -761,7 +728,7 @@ private struct MaintenanceCard: View {
     var body: some View {
         DashboardCard(title: "", systemImage: "wrench.and.screwdriver") {
             VStack(alignment: .leading, spacing: DashboardTheme.itemSpacing) {
-                SubmenuRow(title: "Cocoapods", isExpanded: $utilitiesExpanded)
+                SubmenuRow(title: "Dependency Managers", isExpanded: $utilitiesExpanded)
 
                 if utilitiesExpanded {
                     VStack(alignment: .leading, spacing: 8) {
@@ -998,6 +965,7 @@ private struct SimulatorInspectorCard: View {
             }
             .foregroundStyle(DashboardTheme.primaryText)
             .frame(maxWidth: .infinity, minHeight: DashboardTheme.rowMinimumHeight, alignment: .leading)
+            .padding(.horizontal, DashboardTheme.rowHorizontalPadding)
             .background(
                 RoundedRectangle(cornerRadius: DashboardTheme.rowCornerRadius)
                     .fill(isHovered ? DashboardTheme.rowHover : .clear)
@@ -1106,7 +1074,7 @@ private struct SubmenuRow: View {
             }
             .foregroundStyle(DashboardTheme.primaryText)
             .frame(maxWidth: .infinity, minHeight: DashboardTheme.rowMinimumHeight, alignment: .leading)
-//            .padding(.horizontal, DashboardTheme.rowHorizontalPadding)
+            .padding(.horizontal, DashboardTheme.rowHorizontalPadding)
             .background(rowBackground)
             .contentShape(RoundedRectangle(cornerRadius: DashboardTheme.rowCornerRadius))
         }
@@ -1172,11 +1140,11 @@ private enum DashboardTheme {
     static let outerPadding: CGFloat = 0
     static let sectionHorizontalPadding: CGFloat = 12
     static let sectionVerticalPadding: CGFloat = 10
-    static let sectionSpacing: CGFloat = 0
+    static let sectionSpacing: CGFloat = 4
     static let itemSpacing: CGFloat = 10
     static let rowCornerRadius: CGFloat = 6
-    static let rowHorizontalPadding: CGFloat = 8
-    static let rowMinimumHeight: CGFloat = 28
+    static let rowHorizontalPadding: CGFloat = 10
+    static let rowMinimumHeight: CGFloat = 32
 }
 
 private enum PendingMaintenanceAction: Identifiable {
