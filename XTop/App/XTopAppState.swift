@@ -33,6 +33,8 @@ struct XTopAppState {
             gitService: services.gitService,
             gitMonitorService: services.gitMonitorService,
             maintenanceService: services.maintenanceService,
+            xcodeProjectDetector: services.xcodeProjectDetector,
+            excludedArchsManager: services.excludedArchsManager,
             preferences: preferences,
             sensorSettings: sensorSettings,
             diagnostics: diagnostics
@@ -63,6 +65,8 @@ struct XTopAppServices {
     let gitService: GitContextService
     let gitMonitorService: GitMonitorService
     let maintenanceService: MaintenanceService
+    let xcodeProjectDetector: XcodeProjectDetecting
+    let excludedArchsManager: ExcludedArchsManaging
 
     let simulatorBookmarkStore: SimulatorAccessBookmarkStore
     let simctlClient: SimctlClient
@@ -93,6 +97,8 @@ struct XTopAppServices {
             runner: runner,
             resolver: resolver
         )
+        self.xcodeProjectDetector = XcodeProjectDetector()
+        self.excludedArchsManager = ExcludedArchsManager()
 
         let simctl = SimctlClient(runner: runner)
         self.simctlClient = simctl

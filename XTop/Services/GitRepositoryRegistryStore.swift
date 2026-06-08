@@ -121,6 +121,22 @@ actor GitRepositoryRegistryStore {
         persist(registry)
     }
 
+    func updateRepositoryMetadata(
+        id repositoryID: UUID,
+        xcodeProjectType: XcodeProjectType?,
+        detectedProjectFilePath: String?
+    ) {
+        var registry = load()
+        guard let index = registry.repositories.firstIndex(where: { $0.id == repositoryID }) else {
+            return
+        }
+
+        registry.repositories[index].xcodeProjectType = xcodeProjectType
+        registry.repositories[index].detectedProjectFilePath = detectedProjectFilePath
+        registry.repositories[index].updatedAt = .now
+        persist(registry)
+    }
+
     func markInactive(repositoryID: UUID) {
         var registry = load()
         guard let index = registry.repositories.firstIndex(where: { $0.id == repositoryID }) else {

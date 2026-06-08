@@ -27,6 +27,12 @@ final class MacbarViewModel {
     private let gitMonitorService: GitMonitorService
 
     @ObservationIgnored
+    private let xcodeProjectDetector: XcodeProjectDetecting
+
+    @ObservationIgnored
+    private let excludedArchsManager: ExcludedArchsManaging
+
+    @ObservationIgnored
     private let developerContextCollector: DeveloperContextCollector
 
     @ObservationIgnored
@@ -54,6 +60,8 @@ final class MacbarViewModel {
         gitService: GitContextService,
         gitMonitorService: GitMonitorService,
         maintenanceService: MaintenanceService,
+        xcodeProjectDetector: XcodeProjectDetecting = XcodeProjectDetector(),
+        excludedArchsManager: ExcludedArchsManaging = ExcludedArchsManager(),
         preferences: MacbarPreferences,
         sensorSettings: SensorSettingsModel,
         diagnostics: DeveloperDiagnosticsStore
@@ -61,6 +69,8 @@ final class MacbarViewModel {
         self.telemetryService = telemetryService
         self.maintenanceService = maintenanceService
         self.gitMonitorService = gitMonitorService
+        self.xcodeProjectDetector = xcodeProjectDetector
+        self.excludedArchsManager = excludedArchsManager
         self.preferences = preferences
         self.sensorSettings = sensorSettings
         self.diagnostics = diagnostics
@@ -323,12 +333,101 @@ final class MacbarViewModel {
         gitMonitorProfiles = profiles
     }
 
+    private func resolveProjectFilePath(repositoryID: UUID) -> String? {
+        guard let repository = gitMonitorRegistry.repositories.first(where: { $0.id == repositoryID }) else {
+            return nil
+        }
+
+        guard let projectPath = repository.detectedProjectFilePath,
+              let projectType = repository.xcodeProjectType else {
+            return nil
+        }
+
+        switch projectType {
+        case .xcodeproj:
+            return URL(filePath: projectPath)
+                .appending(path: "project.pbxproj")
+                .path()
+        case .xcworkspace:
+            let rootURL = URL(filePath: repository.path)
+            guard let entries = try? FileManager.default.contentsOfDirectory(atPath: rootURL.path()) else {
+                return nil
+            }
+
+            guard let projectFolder = entries
+                .filter({ $0.hasSuffix(".xcodeproj") })
+                .sorted(by: { lhs, rhs in
+                    lhs.localizedStandardCompare(rhs) == .orderedAscending
+                })
+                .first else {
+                return nil
+            }
+
+            return rootURL
+                .appending(path: projectFolder)
+                .appending(path: "project.pbxproj")
+                .path()
+        case .swiftPackage:
+            return nil
+        }
+    }
+
     func bindRepository(id: UUID, accountProfileID: UUID?) {
         Task { [weak self] in
             guard let self else { return }
             await self.gitMonitorService.bindRepository(id: id, accountProfileID: accountProfileID)
             await self.refreshGitMonitor(force: true)
         }
+    }
+
+    func scanProjectType(for repositoryID: UUID) async {
+        guard let repository = gitMonitorRegistry.repositories.first(where: { $0.id == repositoryID }) else {
+            return
+        }
+
+        let detected = await xcodeProjectDetector.detectProjectType(at: repository.path)
+        await gitMonitorService.updateRepositoryMetadata(
+            id: repositoryID,
+            xcodeProjectType: detected?.type,
+            detectedProjectFilePath: detected?.projectFilePath
+        )
+        await reloadGitRegistry()
+    }
+
+    func dryRunArchsAction(
+        mode: ExcludedArchsMode,
+        repositoryID: UUID
+    ) async throws -> ExcludedArchsResult {
+        guard let projectFilePath = resolveProjectFilePath(repositoryID: repositoryID) else {
+            throw NSError(
+                domain: "MacbarViewModel",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "No eligible Xcode project file found for this repository."]
+            )
+        }
+
+        return try await excludedArchsManager.dryRun(
+            mode: mode,
+            projectFilePath: projectFilePath
+        )
+    }
+
+    func applyArchsAction(
+        mode: ExcludedArchsMode,
+        repositoryID: UUID
+    ) async throws -> ExcludedArchsResult {
+        guard let projectFilePath = resolveProjectFilePath(repositoryID: repositoryID) else {
+            throw NSError(
+                domain: "MacbarViewModel",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "No eligible Xcode project file found for this repository."]
+            )
+        }
+
+        return try await excludedArchsManager.apply(
+            mode: mode,
+            projectFilePath: projectFilePath
+        )
     }
 
     func loginHTTPSProfile(

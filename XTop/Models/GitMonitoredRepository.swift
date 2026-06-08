@@ -5,6 +5,8 @@ struct GitMonitoredRepository: Codable, Identifiable, Sendable {
     var displayName: String
     var path: String
     var canonicalPath: String
+    var xcodeProjectType: XcodeProjectType?
+    var detectedProjectFilePath: String?
     var isPrimary: Bool
     var isActive: Bool
     var boundAccountProfileID: UUID?
@@ -17,6 +19,8 @@ struct GitMonitoredRepository: Codable, Identifiable, Sendable {
         displayName: String,
         path: String,
         canonicalPath: String,
+        xcodeProjectType: XcodeProjectType? = nil,
+        detectedProjectFilePath: String? = nil,
         isPrimary: Bool = false,
         isActive: Bool = true,
         boundAccountProfileID: UUID? = nil,
@@ -28,6 +32,8 @@ struct GitMonitoredRepository: Codable, Identifiable, Sendable {
         self.displayName = displayName
         self.path = path
         self.canonicalPath = canonicalPath
+        self.xcodeProjectType = xcodeProjectType
+        self.detectedProjectFilePath = detectedProjectFilePath
         self.isPrimary = isPrimary
         self.isActive = isActive
         self.boundAccountProfileID = boundAccountProfileID

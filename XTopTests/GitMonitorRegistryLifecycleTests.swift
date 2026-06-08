@@ -94,6 +94,23 @@ struct GitMonitorRegistryLifecycleTests {
         #expect(cleared.repositories[0].boundAccountProfileID == nil)
     }
 
+    @Test("Repository metadata updates persist project type")
+    func repositoryMetadataPersists() async throws {
+        let store = GitRepositoryRegistryStore(defaults: try makeDefaults())
+        let repo = await store.upsertRepository(path: "/tmp/a", displayName: "A")
+
+        await store.updateRepositoryMetadata(
+            id: repo.id,
+            xcodeProjectType: .xcodeproj,
+            detectedProjectFilePath: "/tmp/a/App.xcodeproj"
+        )
+
+        let registry = await store.load()
+        let stored = registry.repositories.first(where: { $0.id == repo.id })
+        #expect(stored?.xcodeProjectType == .xcodeproj)
+        #expect(stored?.detectedProjectFilePath == "/tmp/a/App.xcodeproj")
+    }
+
     private func makeDefaults() throws -> UserDefaults {
         let suite = "GitMonitorRegistryLifecycleTests.\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: suite) else {

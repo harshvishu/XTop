@@ -152,6 +152,7 @@ private struct RepositorySettingsRow: View {
 
                     Text(repository.displayName)
                         .bold()
+                    RepositoryProjectTypeBadge(projectType: repository.xcodeProjectType)
                     if !repository.isActive {
                         Text("Inactive")
                             .font(.caption)

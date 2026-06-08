@@ -51,6 +51,18 @@ actor DefaultGitMonitorService: GitMonitorService {
         )
     }
 
+    func updateRepositoryMetadata(
+        id: UUID,
+        xcodeProjectType: XcodeProjectType?,
+        detectedProjectFilePath: String?
+    ) async {
+        await repositoryStore.updateRepositoryMetadata(
+            id: id,
+            xcodeProjectType: xcodeProjectType,
+            detectedProjectFilePath: detectedProjectFilePath
+        )
+    }
+
     func removeRepository(id: UUID) async {
         await repositoryStore.removeRepository(id: id)
     }

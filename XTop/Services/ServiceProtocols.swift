@@ -24,6 +24,7 @@ protocol GitMonitorService: Sendable {
     func loadProfiles() async -> [GitMonitorAccountProfile]
     func setBaseFolders(_ folders: [String]) async
     func upsertRepository(path: String, displayName: String?, boundAccountProfileID: UUID?) async -> GitMonitoredRepository
+    func updateRepositoryMetadata(id: UUID, xcodeProjectType: XcodeProjectType?, detectedProjectFilePath: String?) async
     func removeRepository(id: UUID) async
     func bindRepository(id: UUID, accountProfileID: UUID?) async
     func setPrimaryRepository(id: UUID) async
@@ -46,4 +47,13 @@ protocol MaintenanceService: Sendable {
     func updateSinglePod(projectPath: String, podName: String) async -> MaintenanceActionResult
     func cleanPodCache(podName: String?) async -> MaintenanceActionResult
     func deintegratePods(projectPath: String) async -> MaintenanceActionResult
+}
+
+protocol XcodeProjectDetecting: Sendable {
+    func detectProjectType(at repositoryPath: String) async -> (type: XcodeProjectType, projectFilePath: String)?
+}
+
+protocol ExcludedArchsManaging: Sendable {
+    func dryRun(mode: ExcludedArchsMode, projectFilePath: String) async throws -> ExcludedArchsResult
+    func apply(mode: ExcludedArchsMode, projectFilePath: String) async throws -> ExcludedArchsResult
 }

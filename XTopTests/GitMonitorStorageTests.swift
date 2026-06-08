@@ -70,6 +70,31 @@ struct GitMonitorStorageTests {
         #expect(removedSecret == nil)
     }
 
+    @Test("GitMonitoredRepository decodes when new metadata fields are missing")
+    func monitoredRepositoryBackwardDecodeCompatibility() throws {
+        let json = """
+        {
+          "id": "11111111-1111-1111-1111-111111111111",
+          "displayName": "Repo",
+          "path": "/tmp/repo",
+          "canonicalPath": "/tmp/repo",
+          "isPrimary": true,
+          "isActive": true,
+          "boundAccountProfileID": null,
+          "createdAt": "2026-01-01T00:00:00Z",
+          "updatedAt": "2026-01-01T00:00:00Z",
+          "lastSeenAt": "2026-01-01T00:00:00Z"
+        }
+        """
+
+        let decoder = JSONDecoder()
+        let data = try #require(json.data(using: .utf8))
+        let decoded = try decoder.decode(GitMonitoredRepository.self, from: data)
+
+        #expect(decoded.xcodeProjectType == nil)
+        #expect(decoded.detectedProjectFilePath == nil)
+    }
+
     private func makeDefaultsSuite() throws -> UserDefaults {
         let suite = "GitMonitorStorageTests.\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: suite) else {

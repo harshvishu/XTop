@@ -444,6 +444,7 @@ private struct XcodeUtilityCard: View {
 private struct GitMonitorCard: View {
     @Environment(MacbarViewModel.self) private var viewModel
     @State private var detailExpanded = false
+    @State private var managedRepositoryID: UUID?
 
     var body: some View {
         DashboardCard(title: "", systemImage: "point.topleft.down.curvedto.point.bottomright.up") {
@@ -452,7 +453,10 @@ private struct GitMonitorCard: View {
                 if let primary = viewModel.primaryMonitoredRepository {
                     PrimaryRepositoryRow(
                         repository: primary,
-                        snapshot: viewModel.gitSnapshot(for: primary.id)
+                        snapshot: viewModel.gitSnapshot(for: primary.id),
+                        onManage: {
+                            managedRepositoryID = primary.id
+                        }
                     )
                 }
 
@@ -465,7 +469,10 @@ private struct GitMonitorCard: View {
                             ForEach(viewModel.secondaryMonitoredRepositories) { repository in
                                 MonitoredRepositoryRow(
                                     repository: repository,
-                                    snapshot: viewModel.gitSnapshot(for: repository.id)
+                                    snapshot: viewModel.gitSnapshot(for: repository.id),
+                                    onManage: {
+                                        managedRepositoryID = repository.id
+                                    }
                                 )
                             }
                         }
@@ -473,7 +480,12 @@ private struct GitMonitorCard: View {
                         if !viewModel.inactiveMonitoredRepositories.isEmpty {
                             DashboardDetailHeading(title: "Inactive Repositories")
                             ForEach(viewModel.inactiveMonitoredRepositories) { repository in
-                                InactiveRepositoryRow(repository: repository)
+                                InactiveRepositoryRow(
+                                    repository: repository,
+                                    onManage: {
+                                        managedRepositoryID = repository.id
+                                    }
+                                )
                             }
                         }
 
@@ -503,6 +515,21 @@ private struct GitMonitorCard: View {
                     .font(.caption)
                     .transition(.opacity)
                 }
+            }
+        }
+        .sheet(
+            isPresented: Binding(
+                get: { managedRepositoryID != nil },
+                set: { presented in
+                    if !presented {
+                        managedRepositoryID = nil
+                    }
+                }
+            )
+        ) {
+            if let repositoryID = managedRepositoryID {
+                RepositoryDetailView(repositoryID: repositoryID)
+                    .environment(viewModel)
             }
         }
     }
@@ -535,6 +562,7 @@ private struct PrimaryRepositoryRow: View {
     @Environment(MacbarViewModel.self) private var viewModel
     let repository: GitMonitoredRepository
     let snapshot: GitRepositorySnapshot?
+    let onManage: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -544,6 +572,8 @@ private struct PrimaryRepositoryRow: View {
                     .font(.subheadline)
                     .bold()
                 Spacer()
+                Button("Manage", action: onManage)
+                    .buttonStyle(.borderless)
                 SyncStateBadge(state: snapshot?.syncState ?? .idle)
             }
 
@@ -576,6 +606,7 @@ private struct MonitoredRepositoryRow: View {
     @Environment(MacbarViewModel.self) private var viewModel
     let repository: GitMonitoredRepository
     let snapshot: GitRepositorySnapshot?
+    let onManage: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
@@ -604,6 +635,9 @@ private struct MonitoredRepositoryRow: View {
             .buttonStyle(.borderless)
             .help("Remove")
             .accessibilityLabel("Remove")
+
+            Button("Manage", action: onManage)
+                .buttonStyle(.borderless)
         }
     }
 }
@@ -611,6 +645,7 @@ private struct MonitoredRepositoryRow: View {
 private struct InactiveRepositoryRow: View {
     @Environment(MacbarViewModel.self) private var viewModel
     let repository: GitMonitoredRepository
+    let onManage: () -> Void
 
     var body: some View {
         HStack {
@@ -631,6 +666,9 @@ private struct InactiveRepositoryRow: View {
             .buttonStyle(.borderless)
             .help("Remove")
             .accessibilityLabel("Remove")
+
+            Button("Manage", action: onManage)
+                .buttonStyle(.borderless)
         }
     }
 }

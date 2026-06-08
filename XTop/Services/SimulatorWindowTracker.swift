@@ -104,6 +104,25 @@ final class SimulatorWindowTracker: @unchecked Sendable {
         }
     }
 
+    /// Returns the rect (in AppKit coordinates) of the simulated device's
+    /// rendered screen inside the Simulator window, if it can be identified.
+    /// Falls back to the full window frame when no plausible child is found.
+    ///
+    /// Picks the smallest AX descendant whose area is between 30% and 99% of
+    /// the window's area — empirically the simulator's rendered screen view
+    /// satisfies this while title-bar buttons, toolbars, and bezel chrome do
+    /// not.
+    @MainActor
+    func currentContentFrame() -> CGRect? {
+        queue.sync {
+            guard let window = axWindow,
+                  let windowFrame = SimulatorWindowTracker.windowFrame(window)
+            else { return nil }
+            return SimulatorWindowTracker.deviceScreenFrame(in: window, windowFrame: windowFrame)
+                ?? windowFrame
+        }
+    }
+
     // MARK: - Internals
 
     private func stopLocked() {
@@ -271,5 +290,47 @@ final class SimulatorWindowTracker: @unchecked Sendable {
             width: cgFrame.size.width,
             height: cgFrame.size.height
         )
+    }
+
+    /// Walks the AX subtree of `window` and returns the smallest descendant
+    /// frame (in AppKit coordinates) whose area is between 30% and 99% of
+    /// the window's area — the simulator's rendered device screen.
+    static func deviceScreenFrame(in window: AXUIElement, windowFrame: CGRect) -> CGRect? {
+        var candidates: [CGRect] = []
+        collectCandidateFrames(element: window, into: &candidates, depth: 0)
+        let windowArea = windowFrame.width * windowFrame.height
+        guard windowArea > 0 else { return nil }
+        let lower = windowArea * 0.30
+        let upper = windowArea * 0.99
+        let filtered = candidates.filter { rect in
+            let area = rect.width * rect.height
+            return area >= lower && area <= upper
+        }
+        return filtered.min {
+            ($0.width * $0.height) < ($1.width * $1.height)
+        }
+    }
+
+    private static func collectCandidateFrames(
+        element: AXUIElement,
+        into list: inout [CGRect],
+        depth: Int
+    ) {
+        // Cap recursion depth to keep the AX walk cheap; the simulator's
+        // screen view is consistently within ~5 levels of the window.
+        guard depth < 6 else { return }
+        var childrenValue: AnyObject?
+        let result = AXUIElementCopyAttributeValue(
+            element,
+            kAXChildrenAttribute as CFString,
+            &childrenValue
+        )
+        guard result == .success, let children = childrenValue as? [AXUIElement] else { return }
+        for child in children {
+            if let frame = windowFrame(child) {
+                list.append(frame)
+            }
+            collectCandidateFrames(element: child, into: &list, depth: depth + 1)
+        }
     }
 }

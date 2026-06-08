@@ -163,7 +163,7 @@ private final class Entry {
         hosting.autoresizingMask = [.width, .height]
         window.contentView = hosting
 
-        if let frame = tracker.currentFrame() {
+        if let frame = tracker.currentContentFrame() ?? tracker.currentFrame() {
             window.setFrame(frame, display: false)
         }
         overlayWindow = window
@@ -211,17 +211,28 @@ private final class Entry {
 
     private func apply(event: SimulatorWindowEvent) {
         switch event {
-        case .frame(let frame):
-            overlayWindow?.setFrame(frame, display: true)
+        case .frame:
+            applyCurrentContentFrame()
             updateVisibilityAndStacking()
         case .minimized:
             isMinimized = true
             updateVisibilityAndStacking()
         case .deminiaturized:
             isMinimized = false
+            applyCurrentContentFrame()
             updateVisibilityAndStacking()
         case .destroyed:
             tearDown()
+        }
+    }
+
+    /// Resize the overlay to the simulator's rendered device screen (falls
+    /// back to the full window frame if the screen rect cannot be derived).
+    private func applyCurrentContentFrame() {
+        guard let window = overlayWindow else { return }
+        let target = tracker.currentContentFrame() ?? tracker.currentFrame()
+        if let target {
+            window.setFrame(target, display: true)
         }
     }
 
